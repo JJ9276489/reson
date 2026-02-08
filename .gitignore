@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+build/
+*.pyc
+.reson_profile.json
+.DS_Store

@@ -1,0 +1,3 @@
+[console_scripts]
+reson-debug = reson.apps.debug_monitor:main
+reson-gui = reson.apps.gui_app:main
