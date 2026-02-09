@@ -20,6 +20,8 @@ class EdgeEvent:
     start_ms: int
     end_ms: int
     duration_ms: int
+    phase: str | None = None
+    press_class: EdgeState | None = None
 
 
 FocusTarget = Literal["text", "backspace"]

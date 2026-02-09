@@ -4,7 +4,6 @@ import argparse
 from collections import deque
 import signal
 import sys
-import time
 
 from reson.port_lock import PortLockHandle, PortLockInUseError, acquire_port_lock
 from reson.qt_runtime import configure_qt_platform_plugin_path, get_qt_plugin_dir, validate_python_runtime
@@ -28,8 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from reson.calibration import CalibrationProfile, build_profile, load_profile, save_profile
-from reson.edge_detector import ThresholdEdgeDetector
+from reson.calibration import CalibrationProfile, load_profile
+from reson.edge_detector import EdgeDetector, make_detector
 from reson.morse_engine import MorseComposer
 from reson.morse_map import MORSE_TO_CHAR
 from reson.parser import parse_line
@@ -72,19 +71,20 @@ class SerialWorker(QThread):
 
 
 class ResonWindow(QMainWindow):
-    def __init__(self, port: str, baud: int, lock_handle: PortLockHandle):
+    def __init__(self, port: str, baud: int, lock_handle: PortLockHandle, detector_mode: str):
         super().__init__()
         self.setWindowTitle("Reson Morse Input")
         self.port = port
         self.baud = baud
+        self.detector_mode = detector_mode
         self.lock_handle = lock_handle
 
-        self.detector: ThresholdEdgeDetector | None = None
+        self.detector: EdgeDetector | None = None
         self.composer = MorseComposer()
         self.log_symbols: deque[str] = deque(maxlen=64)
 
         self._build_ui()
-        self._load_or_calibrate_profile()
+        self._load_detector()
 
         self.worker = SerialWorker(port=port, baud=baud)
         self.worker.sample_signal.connect(self._on_sample)
@@ -127,56 +127,18 @@ class ResonWindow(QMainWindow):
             grid.addWidget(QLabel(f"{label}: {code}"), row, col)
         return box
 
-    def _load_or_calibrate_profile(self) -> None:
+    def _load_detector(self) -> None:
+        profile: CalibrationProfile | None
         try:
             profile = load_profile()
         except FileNotFoundError:
-            profile = self._calibrate_from_stream()
-            save_profile(profile)
-        self.detector = ThresholdEdgeDetector.from_calibration(profile)
-
-    def _calibrate_from_stream(self) -> CalibrationProfile:
-        reader = SerialReader(SerialConfig(port=self.port, baud=self.baud, timeout_s=0.1))
-        try:
-            rest = self._collect_env_stage(reader, count=750, name="rest (relaxed jaw)")
-            light = self._collect_env_stage(reader, count=750, name="light clench")
-            heavy = self._collect_env_stage(reader, count=750, name="heavy clench")
-            return build_profile(rest_env=rest, light_env=light, heavy_env=heavy)
-        finally:
-            reader.close()
-
-    def _collect_env_stage(self, reader: SerialReader, count: int, name: str) -> list[int]:
-        QMessageBox.information(
-            self,
-            "Calibration",
-            f"Calibration stage: {name}. Press OK, hold this level steadily for about 3 seconds.",
-        )
-        return self._collect_env(reader, count=count)
-
-    def _collect_env(self, reader: SerialReader, count: int) -> list[int]:
-        vals: list[int] = []
-        deadline = time.time() + 30
-        retry_delay = reader.config.reconnect_initial_s
-        while len(vals) < count and time.time() < deadline:
-            if not reader.is_connected():
-                if reader.reconnect():
-                    retry_delay = reader.config.reconnect_initial_s
-                    continue
-                time.sleep(retry_delay)
-                retry_delay = reader.next_reconnect_delay(retry_delay)
-                continue
-
-            line = reader.read_line()
-            if line is None:
-                continue
-            sample = parse_line(line)
-            if sample is None:
-                continue
-            vals.append(sample.env)
-
-        if len(vals) < count:
-            raise RuntimeError("Calibration timed out while waiting for serial data.")
-        return vals
+            profile = None
+            QMessageBox.information(
+                self,
+                "Calibration",
+                "No .reson_profile.json found. Using adaptive detector defaults (calibration optional).",
+            )
+        self.detector = make_detector(self.detector_mode, profile)
 
     def _on_sample(self, sample: EmgSample) -> None:
         if self.detector is None:
@@ -208,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Reson GUI")
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", type=int, default=230400)
+    parser.add_argument("--detector", choices=("adaptive", "threshold"), default="adaptive")
     return parser
 
 
@@ -241,7 +204,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _graceful_exit)
     signal.signal(signal.SIGTERM, _graceful_exit)
 
-    win = ResonWindow(port=resolved_port, baud=args.baud, lock_handle=lock_handle)
+    win = ResonWindow(port=resolved_port, baud=args.baud, lock_handle=lock_handle, detector_mode=args.detector)
     win.resize(1200, 800)
     win.show()
 

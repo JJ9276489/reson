@@ -46,13 +46,11 @@ Serial ownership rule:
 
 ## Calibration
 
-On first GUI run, a startup calibration profile is built from three capture windows:
+Calibration is optional in v2.2.1.
 
-1. Rest
-2. Light clench
-3. Heavy clench
-
-Profile is saved to `.reson_profile.json` in the repo root.
+- If `.reson_profile.json` exists, detector thresholds/timing defaults are loaded from it.
+- If profile is missing, the adaptive detector starts with built-in conservative defaults.
+- Profile still uses 3-stage rest/light/heavy capture when generated.
 
 ## Safe shutdown / unplug
 
@@ -74,10 +72,42 @@ Profile is saved to `.reson_profile.json` in the repo root.
 
 ## Behavior
 
+- Adaptive detector is raw-first:
+  - source of truth: `raw`
+  - ESP32 `env` is debug-only
+  - features: `rect=abs(raw-baseline_raw)`, `fast EMA`, `slow EMA`, `a=fast-slow`, `z=a/sigma`
+  - `sigma` is computed from REST-only `a_rest` buffer
 - Edge detector outputs `rest`, `light`, `heavy`.
+- Detector emits lifecycle phases:
+  - `DOWN` on `rest -> light/heavy` after dwell
+  - `UP` on return to rest
+  - class is latched from DOWN until UP
+- Morse safety gates are enforced:
+  - min dwell to enter press states
+  - min event duration (blip rejection)
+  - required clean rest gap before next accepted press
+  - post-release refractory
 - Light press produces dot; heavy press produces dash.
 - Rest gaps resolve buffered symbols into letters/spaces with adaptive Morse timing.
 - Focus target can toggle between text and backspace using a reserved control token.
+
+## Debug monitor telemetry
+
+`reson-debug` now shows stacked shared-time plots:
+
+1. raw
+2. fast + slow
+3. z with thresholds
+4. state (0 rest, 1 light, 2 heavy) with DOWN/UP markers
+
+Optional logging for replay/tuning:
+
+```bash
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --log-file debug_log.csv
+```
+
+CSV columns:
+`t_ms,raw,env_in,fast,slow,a,sigma,z,state,down,up,press_class`
 
 ## Tests
 

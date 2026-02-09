@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from reson.edge_detector import ThresholdEdgeDetector
+from reson.edge_detector import EdgeDetector
 from reson.morse_engine import MorseComposer
 from reson.parser import parse_line
 from reson.serial_io import SerialReader
@@ -18,7 +18,7 @@ def sample_stream(reader: SerialReader) -> Iterator[EmgSample]:
 
 def run_morse_pipeline(
     reader: SerialReader,
-    detector: ThresholdEdgeDetector,
+    detector: EdgeDetector,
     composer: MorseComposer,
 ) -> Iterator[MorseUpdate]:
     for sample in sample_stream(reader):

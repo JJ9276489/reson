@@ -43,6 +43,15 @@ class MorseComposer:
 
         last_resolved: str | None = None
 
+        # DOWN events are emitted for detector visibility; symbol commit happens on release.
+        if edge_event.phase == "down":
+            return MorseUpdate(
+                typed_text=self.typed_text,
+                symbol_buffer=self.symbol_buffer,
+                last_resolved=None,
+                focus=self.focus,
+            )
+
         if edge_event.state in ("light", "heavy"):
             if self.focus == "backspace":
                 if self.typed_text:

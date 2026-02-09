@@ -1,21 +1,23 @@
-from reson.calibration import CalibrationProfile
-from reson.edge_detector import ThresholdEdgeDetector
+from reson.calibration import default_profile
+from reson.edge_detector import make_detector
 from reson.morse_engine import MorseComposer
 from reson.types import EmgSample
 
 
 def test_smoke_e2e_to_symbol_and_letter():
-    detector = ThresholdEdgeDetector.from_calibration(
-        CalibrationProfile(rest_max=10, light_threshold=20, heavy_threshold=40, hysteresis_margin=2)
-    )
+    detector = make_detector("adaptive", default_profile())
     composer = MorseComposer()
 
     stream = [
-        EmgSample(0, 0, 5),
-        EmgSample(100, 0, 30),
-        EmgSample(220, 0, 30),
-        EmgSample(340, 0, 5),
-        EmgSample(700, 0, 5),
+        EmgSample(0, 1000, 5),
+        EmgSample(50, 1000, 5),
+        EmgSample(100, 1000, 5),
+        EmgSample(170, 1900, 30),
+        EmgSample(240, 1900, 30),
+        EmgSample(330, 1900, 30),
+        EmgSample(440, 1000, 5),
+        EmgSample(560, 1000, 5),
+        EmgSample(920, 1000, 5),
     ]
 
     final_text = ""

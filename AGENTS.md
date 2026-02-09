@@ -28,13 +28,29 @@ Run context:
 
 ## Calibration expectations
 
-- GUI does 3-stage capture: rest, light, heavy.
-- Derived thresholds/hysteresis are saved to `.reson_profile.json`.
+- Calibration is optional.
+- If `.reson_profile.json` is present, detector tuning defaults are loaded.
+- If absent, adaptive detector runs with built-in defaults.
+- Profile generation still follows rest/light/heavy stages when used.
 
 ## Detector and timing behavior
 
+- Adaptive detector is raw-first:
+  - Use `raw` for detection features.
+  - Treat incoming `env` as debug-only.
+  - Compute `fast`, `slow`, `a=fast-slow`, and `z=a/sigma` in Python.
+  - Update `baseline_raw`, `slow`, and `sigma` only during confidently REST.
+  - `sigma` must be computed from REST-only `a_rest`, never mixed-state buffers.
 - Detector stable states: `rest`, `light`, `heavy`.
-- Hysteresis + hold times reduce noise flips.
+- Lifecycle phases:
+  - `DOWN` emitted on `rest -> light/heavy` after dwell.
+  - `UP` emitted on return to rest.
+  - Press class is latched from DOWN to UP (no light->heavy escalation in v2.2.1).
+- Safety gates:
+  - min dwell enter criteria
+  - min event duration + blip policy
+  - min clean rest gap before next accepted press
+  - refractory after release
 - Timing module uses adaptive Morse unit estimates.
 - Gap rules resolve letter and word boundaries.
 
@@ -68,9 +84,18 @@ pytest -q
 Run:
 
 ```bash
-reson-debug --port ... --baud 230400
-reson-gui --port ... --baud 230400
+reson-debug --port ... --baud 230400 --detector adaptive
+reson-gui --port ... --baud 230400 --detector adaptive
 ```
+
+Debug replay logging:
+
+```bash
+reson-debug --port ... --baud 230400 --log-file debug_log.csv
+```
+
+Logged fields:
+`t_ms,raw,env_in,fast,slow,a,sigma,z,state,down,up,press_class`
 
 Safe shutdown:
 - Prefer normal app close / Ctrl+C before unplugging ESP32.
