@@ -10,6 +10,8 @@ def test_refractory_and_rest_gap_block_rapid_repeat_presses():
         min_rest_gap_ms=260,
         tau_fast_ms=10,
         tau_slow_ms=300,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
 
     stream = [

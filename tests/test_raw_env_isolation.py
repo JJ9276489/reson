@@ -14,8 +14,8 @@ def _run(detector: AdaptiveEdgeDetector, env_values: list[int]):
 
 
 def test_env_input_does_not_change_adaptive_detector_output():
-    detector_a = AdaptiveEdgeDetector(min_dwell_ms=20, min_event_ms=40)
-    detector_b = AdaptiveEdgeDetector(min_dwell_ms=20, min_event_ms=40)
+    detector_a = AdaptiveEdgeDetector(min_dwell_ms=20, min_event_ms=40, bootstrap_ms=0, filter_enabled=False)
+    detector_b = AdaptiveEdgeDetector(min_dwell_ms=20, min_event_ms=40, bootstrap_ms=0, filter_enabled=False)
 
     states_a, events_a = _run(detector_a, [0] * 8)
     states_b, events_b = _run(detector_b, [1, 50, 99, 1000, 2000, 4095, 10, 3])

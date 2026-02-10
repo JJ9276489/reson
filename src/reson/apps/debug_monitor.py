@@ -95,6 +95,7 @@ class DebugWindow(QWidget):
 
         self.t_data: deque[float] = deque(maxlen=self.max_samples)
         self.raw_data: deque[int] = deque(maxlen=self.max_samples)
+        self.filtered_data: deque[float] = deque(maxlen=self.max_samples)
         self.fast_data: deque[float] = deque(maxlen=self.max_samples)
         self.slow_data: deque[float] = deque(maxlen=self.max_samples)
         self.z_data: deque[float] = deque(maxlen=self.max_samples)
@@ -123,6 +124,7 @@ class DebugWindow(QWidget):
         self.state_plot.setXLink(self.raw_plot)
 
         self.raw_curve = self.raw_plot.plot(pen="y")
+        self.filtered_curve = self.raw_plot.plot(pen=pg.mkPen("w", width=1))
         self.fast_curve = self.fast_plot.plot(pen="c", name="fast")
         self.slow_curve = self.fast_plot.plot(pen="m", name="slow")
         self.z_curve = self.z_plot.plot(pen="w")
@@ -149,11 +151,14 @@ class DebugWindow(QWidget):
                     "t_ms",
                     "raw",
                     "env_in",
+                    "filtered_raw",
                     "fast",
                     "slow",
                     "a",
                     "sigma",
                     "z",
+                    "phase",
+                    "armed",
                     "state",
                     "down",
                     "up",
@@ -199,11 +204,14 @@ class DebugWindow(QWidget):
             t_ms=sample.t_ms,
             raw=sample.raw,
             env_in=sample.env,
+            filtered_raw=float(sample.raw),
             fast=float(sample.raw),
             slow=float(sample.raw),
             a=0.0,
             sigma=1.0,
             z=0.0,
+            phase="N/A",
+            armed=False,
             state=state,
             state_code=code,
             down=0,
@@ -219,6 +227,7 @@ class DebugWindow(QWidget):
 
         self.t_data.append(sample.t_ms / 1000.0)
         self.raw_data.append(sample.raw)
+        self.filtered_data.append(dbg.filtered_raw)
         self.fast_data.append(dbg.fast)
         self.slow_data.append(dbg.slow)
         self.z_data.append(dbg.z)
@@ -232,11 +241,14 @@ class DebugWindow(QWidget):
                     "t_ms": sample.t_ms,
                     "raw": sample.raw,
                     "env_in": sample.env,
+                    "filtered_raw": f"{dbg.filtered_raw:.6f}",
                     "fast": f"{dbg.fast:.6f}",
                     "slow": f"{dbg.slow:.6f}",
                     "a": f"{dbg.a:.6f}",
                     "sigma": f"{dbg.sigma:.6f}",
                     "z": f"{dbg.z:.6f}",
+                    "phase": dbg.phase,
+                    "armed": int(dbg.armed),
                     "state": dbg.state,
                     "down": dbg.down,
                     "up": dbg.up,
@@ -261,6 +273,7 @@ class DebugWindow(QWidget):
             x = x_all[start_idx:]
 
             raw = list(self.raw_data)[start_idx:]
+            filtered = list(self.filtered_data)[start_idx:]
             fast = list(self.fast_data)[start_idx:]
             slow = list(self.slow_data)[start_idx:]
             z = list(self.z_data)[start_idx:]
@@ -269,6 +282,7 @@ class DebugWindow(QWidget):
             up = list(self.up_data)[start_idx:]
 
             self.raw_curve.setData(x, raw)
+            self.filtered_curve.setData(x, filtered)
             self.fast_curve.setData(x, fast)
             self.slow_curve.setData(x, slow)
             self.z_curve.setData(x, z)
@@ -289,6 +303,7 @@ class DebugWindow(QWidget):
             if self.last_dbg is not None:
                 dbg_tail = (
                     f" | z={self.last_dbg.z:.2f} sigma={self.last_dbg.sigma:.2f} "
+                    f"phase={self.last_dbg.phase} armed={int(self.last_dbg.armed)} "
                     f"state={self.last_dbg.state} rf={int(self.last_dbg.gated_refractory)} "
                     f"gap={int(self.last_dbg.gated_rest_gap)}"
                 )

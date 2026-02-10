@@ -75,8 +75,13 @@ Calibration is optional in v2.2.1.
 - Adaptive detector is raw-first:
   - source of truth: `raw`
   - ESP32 `env` is debug-only
-  - features: `rect=abs(raw-baseline_raw)`, `fast EMA`, `slow EMA`, `a=fast-slow`, `z=a/sigma`
+  - preprocessing: high-pass (~20 Hz), notch (60 Hz), low-pass (~230 Hz)
+  - features: `rect=abs(filtered_raw-baseline_raw)`, `fast EMA`, `slow EMA`, `a=fast-slow`, `z=a/sigma`
   - `sigma` is computed from REST-only `a_rest` buffer
+- Startup unlock state machine:
+  - `BOOTSTRAP` (~3s): collect stream and initialize baseline/sigma from quiet windows
+  - `ARMING`: wait for strict confirmed REST
+  - `RUNNING`: emit DOWN/UP events and Morse behavior
 - Edge detector outputs `rest`, `light`, `heavy`.
 - Detector emits lifecycle phases:
   - `DOWN` on `rest -> light/heavy` after dwell
@@ -96,9 +101,10 @@ Calibration is optional in v2.2.1.
 `reson-debug` now shows stacked shared-time plots:
 
 1. raw
-2. fast + slow
-3. z with thresholds
-4. state (0 rest, 1 light, 2 heavy) with DOWN/UP markers
+2. filtered raw (overlay)
+3. fast + slow
+4. z with thresholds
+5. state (0 rest, 1 light, 2 heavy) with DOWN/UP markers
 
 Optional logging for replay/tuning:
 
@@ -107,7 +113,7 @@ reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --log-file debug_log.csv
 ```
 
 CSV columns:
-`t_ms,raw,env_in,fast,slow,a,sigma,z,state,down,up,press_class`
+`t_ms,raw,env_in,filtered_raw,fast,slow,a,sigma,z,phase,armed,state,down,up,press_class`
 
 ## Tests
 

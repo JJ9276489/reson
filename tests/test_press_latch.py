@@ -6,6 +6,8 @@ def test_press_class_is_latched_until_up():
     detector = AdaptiveEdgeDetector(
         min_dwell_ms=40,
         min_event_ms=60,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
 
     stream = [

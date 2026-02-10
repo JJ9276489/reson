@@ -31,8 +31,16 @@ class CalibrationProfile:
     tau_fast_ms: float = 35.0
     tau_slow_ms: float = 1000.0
     tau_baseline_ms: float = 2000.0
+    filter_enabled: bool = True
     sigma_floor: float = 5.0
     sigma_window_s: float = 3.0
+    bootstrap_ms: int = 3000
+    quiet_window_ms: int = 80
+    quiet_fraction: float = 0.25
+    hp_hz: float = 20.0
+    lp_hz: float = 230.0
+    notch_hz: float = 60.0
+    notch_q: float = 20.0
     separation_ok: bool = True
     profile_version: int = 2
 

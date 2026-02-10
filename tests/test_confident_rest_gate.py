@@ -7,6 +7,8 @@ def test_borderline_activity_does_not_count_as_confident_rest():
         min_dwell_ms=40,
         min_event_ms=60,
         rest_conf_dwell_ms=80,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
 
     for t in (0, 50, 100, 150):

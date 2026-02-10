@@ -38,9 +38,14 @@ Run context:
 - Adaptive detector is raw-first:
   - Use `raw` for detection features.
   - Treat incoming `env` as debug-only.
-  - Compute `fast`, `slow`, `a=fast-slow`, and `z=a/sigma` in Python.
+  - Filter raw path in Python (`high-pass -> notch -> low-pass`) before rectification.
+  - Compute `fast`, `slow`, `a=fast-slow`, and `z=a/sigma` from filtered raw.
   - Update `baseline_raw`, `slow`, and `sigma` only during confidently REST.
   - `sigma` must be computed from REST-only `a_rest`, never mixed-state buffers.
+- Detector startup phases:
+  - `BOOTSTRAP`: initialize baseline/sigma from quiet windows; suppress DOWN/UP.
+  - `ARMING`: wait for strict confirmed REST.
+  - `RUNNING`: normal event emission.
 - Detector stable states: `rest`, `light`, `heavy`.
 - Lifecycle phases:
   - `DOWN` emitted on `rest -> light/heavy` after dwell.
@@ -95,7 +100,7 @@ reson-debug --port ... --baud 230400 --log-file debug_log.csv
 ```
 
 Logged fields:
-`t_ms,raw,env_in,fast,slow,a,sigma,z,state,down,up,press_class`
+`t_ms,raw,env_in,filtered_raw,fast,slow,a,sigma,z,phase,armed,state,down,up,press_class`
 
 Safe shutdown:
 - Prefer normal app close / Ctrl+C before unplugging ESP32.

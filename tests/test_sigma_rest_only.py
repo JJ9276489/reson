@@ -3,7 +3,14 @@ from reson.types import EmgSample
 
 
 def test_sigma_updates_only_from_rest_buffer():
-    detector = AdaptiveEdgeDetector(min_dwell_ms=40, min_event_ms=40, tau_fast_ms=20, tau_slow_ms=500)
+    detector = AdaptiveEdgeDetector(
+        min_dwell_ms=40,
+        min_event_ms=40,
+        tau_fast_ms=20,
+        tau_slow_ms=500,
+        bootstrap_ms=0,
+        filter_enabled=False,
+    )
 
     for t in (0, 50, 100, 150):
         detector.update(EmgSample(t, 1000, 0))

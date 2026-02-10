@@ -15,6 +15,8 @@ def test_blip_policy_noise_uses_refractory_only():
         min_event_ms=120,
         refractory_ms=90,
         min_rest_gap_ms=260,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
     detector._stable_state = "light"
     detector._press_start_ms = 100
@@ -30,6 +32,8 @@ def test_blip_policy_real_short_enforces_rest_gap():
         min_event_ms=120,
         refractory_ms=90,
         min_rest_gap_ms=260,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
 
     detector._stable_state = "heavy"
@@ -49,6 +53,8 @@ def test_e2e_real_short_press_blocks_second_down_until_rest_gap():
         min_rest_gap_ms=260,
         tau_fast_ms=10,
         tau_slow_ms=300,
+        bootstrap_ms=0,
+        filter_enabled=False,
     )
 
     samples = [

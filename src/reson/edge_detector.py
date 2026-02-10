@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import median
 from typing import Protocol
 
 from reson.calibration import CalibrationProfile, default_profile
@@ -21,11 +22,14 @@ class DetectorDebug:
     t_ms: int
     raw: int
     env_in: int
+    filtered_raw: float
     fast: float
     slow: float
     a: float
     sigma: float
     z: float
+    phase: str
+    armed: bool
     state: EdgeState
     state_code: int
     down: int
@@ -58,8 +62,16 @@ class AdaptiveEdgeDetector:
         tau_fast_ms: float = 35.0,
         tau_slow_ms: float = 1000.0,
         tau_baseline_ms: float = 2000.0,
+        filter_enabled: bool = True,
         sigma_floor: float = 5.0,
         sigma_window_s: float = 3.0,
+        bootstrap_ms: int = 3000,
+        quiet_window_ms: int = 80,
+        quiet_fraction: float = 0.25,
+        hp_hz: float = 20.0,
+        lp_hz: float = 230.0,
+        notch_hz: float = 60.0,
+        notch_q: float = 20.0,
     ):
         self.t_low_enter = t_low_enter
         self.t_low_exit = t_low_exit
@@ -71,13 +83,21 @@ class AdaptiveEdgeDetector:
         self.refractory_ms = refractory_ms
         self.k_rest = k_rest
         self.rest_conf_dwell_ms = rest_conf_dwell_ms
+        self.bootstrap_ms = bootstrap_ms
+        self.quiet_window_ms = quiet_window_ms
+        self.quiet_fraction = quiet_fraction
 
         self.features = RawFeatureEngine(
             tau_fast_ms=tau_fast_ms,
             tau_slow_ms=tau_slow_ms,
             tau_baseline_ms=tau_baseline_ms,
+            filter_enabled=filter_enabled,
             sigma_floor=sigma_floor,
             sigma_window_s=sigma_window_s,
+            hp_hz=hp_hz,
+            lp_hz=lp_hz,
+            notch_hz=notch_hz,
+            notch_q=notch_q,
         )
 
         self._stable_state: EdgeState = "rest"
@@ -96,6 +116,9 @@ class AdaptiveEdgeDetector:
         self._press_start_ms: int | None = None
         self._press_class: EdgeState | None = None
         self._press_peak_z = 0.0
+        self._phase = "BOOTSTRAP" if bootstrap_ms > 0 else "RUNNING"
+        self._bootstrap_start_ms: int | None = None
+        self._bootstrap_samples: list[FeatureSnapshot] = []
 
     @classmethod
     def from_profile(cls, profile: CalibrationProfile | None) -> "AdaptiveEdgeDetector":
@@ -114,9 +137,76 @@ class AdaptiveEdgeDetector:
             tau_fast_ms=p.tau_fast_ms,
             tau_slow_ms=p.tau_slow_ms,
             tau_baseline_ms=p.tau_baseline_ms,
+            filter_enabled=p.filter_enabled,
             sigma_floor=p.sigma_floor,
             sigma_window_s=p.sigma_window_s,
+            bootstrap_ms=p.bootstrap_ms,
+            quiet_window_ms=p.quiet_window_ms,
+            quiet_fraction=p.quiet_fraction,
+            hp_hz=p.hp_hz,
+            lp_hz=p.lp_hz,
+            notch_hz=p.notch_hz,
+            notch_q=p.notch_q,
         )
+
+    def phase(self) -> str:
+        return self._phase
+
+    def is_armed(self) -> bool:
+        return self._phase == "RUNNING"
+
+    def _bootstrap_init(self, t_ms: int) -> None:
+        if not self._bootstrap_samples:
+            return
+        vals = self._bootstrap_samples
+        times = [s.t_ms for s in vals]
+        dt_ms = int(median([max(b - a, 1) for a, b in zip(times, times[1:])])) if len(times) > 1 else 4
+        win_n = max(int(self.quiet_window_ms / max(dt_ms, 1)), 4)
+        windows: list[tuple[float, int, int]] = []
+        for i in range(0, max(len(vals) - win_n + 1, 1), max(win_n // 2, 1)):
+            chunk = vals[i : i + win_n]
+            if not chunk:
+                continue
+            fr = [s.filtered_raw for s in chunk]
+            center = sum(fr) / len(fr)
+            rms = sum((x - center) ** 2 for x in fr) / len(fr)
+            slope = sum(abs(fr[j] - fr[j - 1]) for j in range(1, len(fr))) / max(len(fr) - 1, 1)
+            score = rms + (0.5 * slope)
+            windows.append((score, i, i + len(chunk)))
+        windows.sort(key=lambda w: w[0])
+        keep = max(1, int(len(windows) * max(min(self.quiet_fraction, 0.8), 0.05)))
+        keep_windows = windows[:keep]
+        quiet_idx: set[int] = set()
+        for _, s, e in keep_windows:
+            quiet_idx.update(range(s, e))
+        quiet = [vals[i] for i in sorted(quiet_idx)] if quiet_idx else vals
+        filtered = [s.filtered_raw for s in quiet]
+        rects = [s.rect for s in quiet]
+        a_vals = [s.a for s in quiet]
+        baseline = median(filtered) if filtered else 0.0
+        slow = median(rects) if rects else 0.0
+        a_sorted = sorted(a_vals) if a_vals else [0.0]
+        p50 = a_sorted[int((len(a_sorted) - 1) * 0.5)]
+        p95 = a_sorted[int((len(a_sorted) - 1) * 0.95)]
+        sigma = max(p95 - p50, self.features.sigma_floor)
+        self.features.set_bootstrap_state(
+            baseline_raw=baseline,
+            slow=slow,
+            sigma=sigma,
+            t_ms=t_ms,
+            a_seed=a_vals[-64:],
+        )
+        self.features.fast = slow
+        self._stable_state = "rest"
+        self._stable_start_ms = t_ms
+        self._rest_start_ms = t_ms
+        self._pending = None
+        self._events = []
+        self._press_start_ms = None
+        self._press_class = None
+        self._press_peak_z = 0.0
+        self._confident_rest = False
+        self._rest_conf_start_ms = None
 
     def _update_confident_rest(self, sample_t_ms: int, z: float) -> None:
         rest_gate = z < (self.t_low_exit * self.k_rest)
@@ -248,15 +338,75 @@ class AdaptiveEdgeDetector:
         if self._stable_start_ms is None:
             self._stable_start_ms = sample.t_ms
             self._rest_start_ms = sample.t_ms
+        if self._bootstrap_start_ms is None:
+            self._bootstrap_start_ms = sample.t_ms
+
+        if self._phase == "BOOTSTRAP":
+            snap = self.features.update(sample, rest_adapt=False)
+            self._last_snapshot = snap
+            self._bootstrap_samples.append(snap)
+            if (sample.t_ms - self._bootstrap_start_ms) >= self.bootstrap_ms:
+                self._bootstrap_init(sample.t_ms)
+                self._phase = "ARMING"
+            debug_state: EdgeState = "heavy" if snap.z >= self.t_high_enter else "light" if snap.z >= self.t_low_enter else "rest"
+            self._last_debug = DetectorDebug(
+                t_ms=sample.t_ms,
+                raw=sample.raw,
+                env_in=sample.env,
+                filtered_raw=snap.filtered_raw,
+                fast=snap.fast,
+                slow=snap.slow,
+                a=snap.a,
+                sigma=snap.sigma,
+                z=snap.z,
+                phase=self._phase,
+                armed=False,
+                state=debug_state,
+                state_code={"rest": 0, "light": 1, "heavy": 2}[debug_state],
+                down=0,
+                up=0,
+                press_class=None,
+                gated_refractory=False,
+                gated_rest_gap=False,
+            )
+            return debug_state
 
         rest_adapt = self._confident_rest and self._stable_state == "rest" and self._pending is None
         if rest_adapt:
             preview_z = self.features.preview_z(sample)
             if preview_z >= (self.t_low_exit * self.k_rest):
                 rest_adapt = False
-
         snap = self.features.update(sample, rest_adapt=rest_adapt)
         self._last_snapshot = snap
+
+        if self._phase == "ARMING":
+            self._stable_state = "rest"
+            self._pending = None
+            self._update_confident_rest(sample.t_ms, snap.z)
+            if self._confident_rest:
+                self._phase = "RUNNING"
+            debug_state: EdgeState = "heavy" if snap.z >= self.t_high_enter else "light" if snap.z >= self.t_low_enter else "rest"
+            self._last_debug = DetectorDebug(
+                t_ms=sample.t_ms,
+                raw=sample.raw,
+                env_in=sample.env,
+                filtered_raw=snap.filtered_raw,
+                fast=snap.fast,
+                slow=snap.slow,
+                a=snap.a,
+                sigma=snap.sigma,
+                z=snap.z,
+                phase=self._phase,
+                armed=self.is_armed(),
+                state=debug_state,
+                state_code={"rest": 0, "light": 1, "heavy": 2}[debug_state],
+                down=0,
+                up=0,
+                press_class=None,
+                gated_refractory=False,
+                gated_rest_gap=False,
+            )
+            return debug_state
 
         self._update_confident_rest(sample.t_ms, snap.z)
         candidate = self._candidate_state(sample.t_ms, snap.z)
@@ -268,11 +418,14 @@ class AdaptiveEdgeDetector:
             t_ms=sample.t_ms,
             raw=sample.raw,
             env_in=sample.env,
+            filtered_raw=snap.filtered_raw,
             fast=snap.fast,
             slow=snap.slow,
             a=snap.a,
             sigma=snap.sigma,
             z=snap.z,
+            phase=self._phase,
+            armed=self.is_armed(),
             state=self._stable_state,
             state_code={"rest": 0, "light": 1, "heavy": 2}[self._stable_state],
             down=1 if self._events and self._events[-1].phase == "down" and self._events[-1].end_ms == sample.t_ms else 0,
