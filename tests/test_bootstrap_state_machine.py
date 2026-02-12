@@ -29,10 +29,10 @@ def test_bootstrap_and_arming_produce_no_events_until_running():
     assert all(e.phase is None for e in events)
 
 
-def test_bootstrap_initializes_sigma_above_floor_when_noise_present():
+def test_bootstrap_initializes_rest_scale_above_floor_when_noise_present():
     detector = AdaptiveEdgeDetector(
         bootstrap_ms=300,
-        sigma_floor=5.0,
+        rest_scale_floor=5.0,
         filter_enabled=False,
     )
 
@@ -48,4 +48,4 @@ def test_bootstrap_initializes_sigma_above_floor_when_noise_present():
 
     dbg = detector.last_debug()
     assert dbg is not None
-    assert dbg.sigma >= 5.0
+    assert dbg.rest_scale >= 5.0

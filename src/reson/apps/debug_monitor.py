@@ -96,12 +96,15 @@ class DebugWindow(QWidget):
         self.t_data: deque[float] = deque(maxlen=self.max_samples)
         self.raw_data: deque[int] = deque(maxlen=self.max_samples)
         self.filtered_data: deque[float] = deque(maxlen=self.max_samples)
-        self.fast_data: deque[float] = deque(maxlen=self.max_samples)
-        self.slow_data: deque[float] = deque(maxlen=self.max_samples)
-        self.z_data: deque[float] = deque(maxlen=self.max_samples)
+        self.rms_data: deque[float] = deque(maxlen=self.max_samples)
+        self.center_data: deque[float] = deque(maxlen=self.max_samples)
+        self.scale_data: deque[float] = deque(maxlen=self.max_samples)
+        self.u_data: deque[float] = deque(maxlen=self.max_samples)
+        self.artifact_data: deque[float] = deque(maxlen=self.max_samples)
         self.state_data: deque[int] = deque(maxlen=self.max_samples)
         self.down_data: deque[int] = deque(maxlen=self.max_samples)
         self.up_data: deque[int] = deque(maxlen=self.max_samples)
+        self.gate_data: deque[int] = deque(maxlen=self.max_samples)
 
         self.parse_errors = 0
         self.line_count = 0
@@ -115,32 +118,36 @@ class DebugWindow(QWidget):
         layout = QVBoxLayout(self)
         self.stats = QLabel("Initializing...")
 
-        self.raw_plot = pg.PlotWidget(title="Raw")
-        self.fast_plot = pg.PlotWidget(title="Fast + Slow")
-        self.z_plot = pg.PlotWidget(title="Z (with thresholds)")
+        self.raw_plot = pg.PlotWidget(title="Raw (+ high-passed filtered overlay)")
+        self.rms_plot = pg.PlotWidget(title="RMS State + REST Center/Scale")
+        self.u_plot = pg.PlotWidget(title="u (REST-normalized RMS) + thresholds")
         self.state_plot = pg.PlotWidget(title="State (rest=0 light=1 heavy=2)")
-        self.fast_plot.setXLink(self.raw_plot)
-        self.z_plot.setXLink(self.raw_plot)
+
+        self.rms_plot.setXLink(self.raw_plot)
+        self.u_plot.setXLink(self.raw_plot)
         self.state_plot.setXLink(self.raw_plot)
 
         self.raw_curve = self.raw_plot.plot(pen="y")
         self.filtered_curve = self.raw_plot.plot(pen=pg.mkPen("w", width=1))
-        self.fast_curve = self.fast_plot.plot(pen="c", name="fast")
-        self.slow_curve = self.fast_plot.plot(pen="m", name="slow")
-        self.z_curve = self.z_plot.plot(pen="w")
+        self.rms_curve = self.rms_plot.plot(pen="c", name="rms_state")
+        self.center_curve = self.rms_plot.plot(pen="m", name="rest_center")
+        self.scale_curve = self.rms_plot.plot(pen=pg.mkPen("g", width=1), name="rest_scale")
+        self.u_curve = self.u_plot.plot(pen="w")
+        self.artifact_curve = self.u_plot.plot(pen=pg.mkPen("orange", width=1), name="artifact_score")
         self.state_curve = self.state_plot.plot(pen="g", stepMode="left")
         self.down_curve = self.state_plot.plot(pen=None, symbol="t", symbolBrush="r")
         self.up_curve = self.state_plot.plot(pen=None, symbol="o", symbolBrush="b")
+        self.gate_curve = self.state_plot.plot(pen=None, symbol="x", symbolBrush="orange")
 
-        self.low_line = pg.InfiniteLine(angle=0, pen=pg.mkPen("orange", width=1))
-        self.high_line = pg.InfiniteLine(angle=0, pen=pg.mkPen("red", width=1))
-        self.z_plot.addItem(self.low_line)
-        self.z_plot.addItem(self.high_line)
+        self.light_line = pg.InfiniteLine(angle=0, pen=pg.mkPen("orange", width=1))
+        self.heavy_line = pg.InfiniteLine(angle=0, pen=pg.mkPen("red", width=1))
+        self.u_plot.addItem(self.light_line)
+        self.u_plot.addItem(self.heavy_line)
 
         layout.addWidget(self.stats)
         layout.addWidget(self.raw_plot)
-        layout.addWidget(self.fast_plot)
-        layout.addWidget(self.z_plot)
+        layout.addWidget(self.rms_plot)
+        layout.addWidget(self.u_plot)
         layout.addWidget(self.state_plot)
 
         if self.log_path is not None:
@@ -151,12 +158,16 @@ class DebugWindow(QWidget):
                     "t_ms",
                     "raw",
                     "env_in",
-                    "filtered_raw",
-                    "fast",
-                    "slow",
-                    "a",
-                    "sigma",
-                    "z",
+                    "filtered_raw_hp",
+                    "rms_state",
+                    "rest_center",
+                    "rest_scale",
+                    "u",
+                    "lf_energy",
+                    "artifact_ratio",
+                    "artifact_score",
+                    "artifact_gated",
+                    "rest_confident",
                     "phase",
                     "armed",
                     "state",
@@ -191,7 +202,6 @@ class DebugWindow(QWidget):
     def _extract_debug(self, sample: EmgSample) -> DetectorDebug:
         state = self.detector.update(sample)
         for _ in self.detector.pop_events():
-            # Pop to keep detector queue bounded for debug app.
             pass
 
         if isinstance(self.detector, AdaptiveEdgeDetector):
@@ -204,12 +214,16 @@ class DebugWindow(QWidget):
             t_ms=sample.t_ms,
             raw=sample.raw,
             env_in=sample.env,
-            filtered_raw=float(sample.raw),
-            fast=float(sample.raw),
-            slow=float(sample.raw),
-            a=0.0,
-            sigma=1.0,
-            z=0.0,
+            filtered_raw_hp=float(sample.raw),
+            rms_state=0.0,
+            rest_center=0.0,
+            rest_scale=1.0,
+            u=0.0,
+            lf_energy=0.0,
+            artifact_ratio=0.0,
+            artifact_score=0.0,
+            artifact_gated=False,
+            rest_confident=False,
             phase="N/A",
             armed=False,
             state=state,
@@ -227,13 +241,16 @@ class DebugWindow(QWidget):
 
         self.t_data.append(sample.t_ms / 1000.0)
         self.raw_data.append(sample.raw)
-        self.filtered_data.append(dbg.filtered_raw)
-        self.fast_data.append(dbg.fast)
-        self.slow_data.append(dbg.slow)
-        self.z_data.append(dbg.z)
+        self.filtered_data.append(dbg.filtered_raw_hp)
+        self.rms_data.append(dbg.rms_state)
+        self.center_data.append(dbg.rest_center)
+        self.scale_data.append(dbg.rest_scale)
+        self.u_data.append(dbg.u)
+        self.artifact_data.append(dbg.artifact_score)
         self.state_data.append(dbg.state_code)
         self.down_data.append(dbg.down)
         self.up_data.append(dbg.up)
+        self.gate_data.append(1 if dbg.artifact_gated else 0)
 
         if self.log_writer is not None:
             self.log_writer.writerow(
@@ -241,12 +258,16 @@ class DebugWindow(QWidget):
                     "t_ms": sample.t_ms,
                     "raw": sample.raw,
                     "env_in": sample.env,
-                    "filtered_raw": f"{dbg.filtered_raw:.6f}",
-                    "fast": f"{dbg.fast:.6f}",
-                    "slow": f"{dbg.slow:.6f}",
-                    "a": f"{dbg.a:.6f}",
-                    "sigma": f"{dbg.sigma:.6f}",
-                    "z": f"{dbg.z:.6f}",
+                    "filtered_raw_hp": f"{dbg.filtered_raw_hp:.6f}",
+                    "rms_state": f"{dbg.rms_state:.6f}",
+                    "rest_center": f"{dbg.rest_center:.6f}",
+                    "rest_scale": f"{dbg.rest_scale:.6f}",
+                    "u": f"{dbg.u:.6f}",
+                    "lf_energy": f"{dbg.lf_energy:.6f}",
+                    "artifact_ratio": f"{dbg.artifact_ratio:.6f}",
+                    "artifact_score": f"{dbg.artifact_score:.6f}",
+                    "artifact_gated": int(dbg.artifact_gated),
+                    "rest_confident": int(dbg.rest_confident),
                     "phase": dbg.phase,
                     "armed": int(dbg.armed),
                     "state": dbg.state,
@@ -274,37 +295,46 @@ class DebugWindow(QWidget):
 
             raw = list(self.raw_data)[start_idx:]
             filtered = list(self.filtered_data)[start_idx:]
-            fast = list(self.fast_data)[start_idx:]
-            slow = list(self.slow_data)[start_idx:]
-            z = list(self.z_data)[start_idx:]
+            rms = list(self.rms_data)[start_idx:]
+            center = list(self.center_data)[start_idx:]
+            scale = list(self.scale_data)[start_idx:]
+            u = list(self.u_data)[start_idx:]
+            artifact = list(self.artifact_data)[start_idx:]
             state = list(self.state_data)[start_idx:]
             down = list(self.down_data)[start_idx:]
             up = list(self.up_data)[start_idx:]
+            gate = list(self.gate_data)[start_idx:]
 
             self.raw_curve.setData(x, raw)
             self.filtered_curve.setData(x, filtered)
-            self.fast_curve.setData(x, fast)
-            self.slow_curve.setData(x, slow)
-            self.z_curve.setData(x, z)
+            self.rms_curve.setData(x, rms)
+            self.center_curve.setData(x, center)
+            self.scale_curve.setData(x, scale)
+            self.u_curve.setData(x, u)
+            self.artifact_curve.setData(x, artifact)
             self.state_curve.setData(x, state)
 
             down_x = [tx for tx, val in zip(x, down) if val == 1]
             down_y = [1.1 for _ in down_x]
             up_x = [tx for tx, val in zip(x, up) if val == 1]
             up_y = [0.1 for _ in up_x]
+            gate_x = [tx for tx, val in zip(x, gate) if val == 1]
+            gate_y = [2.25 for _ in gate_x]
             self.down_curve.setData(down_x, down_y)
             self.up_curve.setData(up_x, up_y)
+            self.gate_curve.setData(gate_x, gate_y)
 
             if isinstance(self.detector, AdaptiveEdgeDetector):
-                self.low_line.setValue(self.detector.t_low_enter)
-                self.high_line.setValue(self.detector.t_high_enter)
+                self.light_line.setValue(self.detector.u_light_enter)
+                self.heavy_line.setValue(self.detector.u_heavy_enter)
 
             dbg_tail = ""
             if self.last_dbg is not None:
                 dbg_tail = (
-                    f" | z={self.last_dbg.z:.2f} sigma={self.last_dbg.sigma:.2f} "
+                    f" | u={self.last_dbg.u:.2f} rms={self.last_dbg.rms_state:.1f} "
                     f"phase={self.last_dbg.phase} armed={int(self.last_dbg.armed)} "
-                    f"state={self.last_dbg.state} rf={int(self.last_dbg.gated_refractory)} "
+                    f"state={self.last_dbg.state} gate={int(self.last_dbg.artifact_gated)} "
+                    f"rest_conf={int(self.last_dbg.rest_confident)} rf={int(self.last_dbg.gated_refractory)} "
                     f"gap={int(self.last_dbg.gated_rest_gap)}"
                 )
             self.stats.setText(

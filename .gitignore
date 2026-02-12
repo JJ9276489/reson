@@ -5,3 +5,5 @@ build/
 *.pyc
 .reson_profile.json
 .DS_Store
+make_context.py
+context.txt

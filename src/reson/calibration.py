@@ -17,23 +17,22 @@ class CalibrationProfile:
     heavy_threshold: float = 40.0
     hysteresis_margin: float = 2.0
 
-    # Adaptive detector tuning defaults.
-    t_low_enter: float = 2.4
-    t_low_exit: float = 1.7
-    t_high_enter: float = 4.2
-    t_high_exit: float = 3.2
+    # Adaptive detector tuning defaults (v2.4.1 RMS-state model).
+    u_light_enter: float = 1.0
+    u_light_exit: float = 0.8
+    u_heavy_enter: float = 2.0
+    u_heavy_exit: float = 1.6
+    u_rest_conf_threshold: float = 0.6
     min_dwell_ms: int = 90
     min_event_ms: int = 60
     min_rest_gap_ms: int = 140
     refractory_ms: int = 90
     rest_conf_dwell_ms: int = 80
-    k_rest: float = 0.8
-    tau_fast_ms: float = 35.0
-    tau_slow_ms: float = 1000.0
     tau_baseline_ms: float = 2000.0
     filter_enabled: bool = True
-    sigma_floor: float = 5.0
-    sigma_window_s: float = 3.0
+    rest_scale_floor: float = 5.0
+    rms_state_window_ms: int = 180
+    rest_stats_window_s: float = 3.0
     bootstrap_ms: int = 3000
     quiet_window_ms: int = 80
     quiet_fraction: float = 0.25
@@ -41,8 +40,14 @@ class CalibrationProfile:
     lp_hz: float = 230.0
     notch_hz: float = 60.0
     notch_q: float = 20.0
+    artifact_enter: float = 1.9
+    artifact_exit: float = 1.4
+    artifact_holdoff_ms: int = 180
+    artifact_lf_hz: float = 10.0
+    slope_fast_tau_ms: float = 40.0
+    slope_slow_tau_ms: float = 400.0
     separation_ok: bool = True
-    profile_version: int = 2
+    profile_version: int = 3
 
 
 class CalibrationError(RuntimeError):
@@ -74,21 +79,23 @@ def build_profile(rest_env: list[int], light_env: list[int], heavy_env: list[int
     heavy_sep = heavy_center - light_center
     sep_ok = light_sep > 5.0 and heavy_sep > 5.0
 
-    # Convert stage spacing into conservative z-threshold estimates.
-    t_low_enter = 2.2 if sep_ok else 2.8
-    t_high_enter = 4.0 if sep_ok else 4.8
-    t_low_exit = t_low_enter * 0.70
-    t_high_exit = t_high_enter * 0.78
+    # Conservative defaults for normalized RMS state thresholds.
+    u_light_enter = 1.0 if sep_ok else 1.2
+    u_heavy_enter = 2.0 if sep_ok else 2.4
+    u_light_exit = u_light_enter * 0.8
+    u_heavy_exit = u_heavy_enter * 0.8
+    u_rest_conf_threshold = u_light_exit * 0.75
 
     return CalibrationProfile(
         rest_max=rest_max,
         light_threshold=light_threshold,
         heavy_threshold=heavy_threshold,
         hysteresis_margin=hysteresis_margin,
-        t_low_enter=t_low_enter,
-        t_low_exit=t_low_exit,
-        t_high_enter=t_high_enter,
-        t_high_exit=t_high_exit,
+        u_light_enter=u_light_enter,
+        u_light_exit=u_light_exit,
+        u_heavy_enter=u_heavy_enter,
+        u_heavy_exit=u_heavy_exit,
+        u_rest_conf_threshold=u_rest_conf_threshold,
         separation_ok=sep_ok,
     )
 

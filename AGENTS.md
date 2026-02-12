@@ -17,47 +17,54 @@ reson-gui --port /dev/cu.usbserial-XXXX --baud 230400
 
 Run context:
 - Use macOS Terminal as canonical launch context for Qt apps.
-- VS Code integrated terminal is best-effort and may fail depending on env/plugin state.
+- VS Code integrated terminal is best-effort and may fail depending on environment/plugin state.
 
 ## Serial assumptions
 
-- ESP32 emits exactly `t raw env` integer rows at about 250 Hz.
+- ESP32 emits `t raw env` integer rows at about 250 Hz.
 - Only one process can own the serial port at a time.
-- Debug app and GUI app are separate entrypoints and should not share a port concurrently.
-- Reson uses per-port lockfiles under `.reson_locks/` to enforce single ownership.
+- Debug app and GUI app are separate entrypoints and must not share a port concurrently.
+- Reson uses per-port lockfiles under `.reson_locks/`.
 
 ## Calibration expectations
 
 - Calibration is optional.
 - If `.reson_profile.json` is present, detector tuning defaults are loaded.
 - If absent, adaptive detector runs with built-in defaults.
-- Profile generation still follows rest/light/heavy stages when used.
+- Profile generation still uses rest/light/heavy stages.
 
-## Detector and timing behavior
+## Detector and timing behavior (v2.4.1)
 
 - Adaptive detector is raw-first:
-  - Use `raw` for detection features.
-  - Treat incoming `env` as debug-only.
-  - Filter raw path in Python (`high-pass -> notch -> low-pass`) before rectification.
-  - Compute `fast`, `slow`, `a=fast-slow`, and `z=a/sigma` from filtered raw.
-  - Update `baseline_raw`, `slow`, and `sigma` only during confidently REST.
-  - `sigma` must be computed from REST-only `a_rest`, never mixed-state buffers.
-- Detector startup phases:
-  - `BOOTSTRAP`: initialize baseline/sigma from quiet windows; suppress DOWN/UP.
-  - `ARMING`: wait for strict confirmed REST.
-  - `RUNNING`: normal event emission.
-- Detector stable states: `rest`, `light`, `heavy`.
-- Lifecycle phases:
-  - `DOWN` emitted on `rest -> light/heavy` after dwell.
-  - `UP` emitted on return to rest.
-  - Press class is latched from DOWN to UP (no light->heavy escalation in v2.2.1).
-- Safety gates:
-  - min dwell enter criteria
+  - use `raw` for detection
+  - treat incoming `env` as debug-only
+  - process: `raw -> filtered_raw_hp -> rms_state -> u -> state machine`
+- RMS-state normalization:
+  - `u = (rms_state - rest_center) / max(rest_scale, rest_scale_floor)`
+  - `rest_center` and `rest_scale` are REST-only robust stats
+- REST-only learning guard:
+  - update `baseline_raw`, `rest_center`, `rest_scale` only when:
+    - stable state is `rest`
+    - no pending transition
+    - `rest_confident` true
+    - artifact gate off
+- Startup phases:
+  - `BOOTSTRAP`: quiet-window initialization
+  - `ARMING`: wait for confident REST
+  - `RUNNING`: emit DOWN/UP
+- Artifact gate:
+  - based on low-frequency energy ratio + slope burst
+  - while gated: force REST candidate, suppress DOWN/UP, clear pending/dwell, restart rest-confidence timer
+- Stable states: `rest`, `light`, `heavy`
+- Lifecycle events:
+  - `DOWN` on confirmed `rest -> light/heavy`
+  - `UP` on confirmed return to REST
+  - press class latched from DOWN until UP
+- Morse safety gates stay enabled:
+  - min dwell
   - min event duration + blip policy
-  - min clean rest gap before next accepted press
+  - min REST gap before next accepted press
   - refractory after release
-- Timing module uses adaptive Morse unit estimates.
-- Gap rules resolve letter and word boundaries.
 
 ## Control tokens
 
@@ -75,15 +82,17 @@ Install:
 ```bash
 /opt/homebrew/bin/python3.11 -m venv .venv
 source .venv/bin/activate
-pip install '.[dev]'
+python -m ensurepip --upgrade
+python -m pip install -U pip setuptools wheel
+python -m pip install '.[dev]'
 ```
 
-Use Python 3.11/3.12 (not 3.14) to avoid Qt plugin/runtime and editable-install issues.
+Use Python 3.11/3.12 (not 3.14).
 
 Test:
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
 
 Run:
@@ -100,25 +109,25 @@ reson-debug --port ... --baud 230400 --log-file debug_log.csv
 ```
 
 Logged fields:
-`t_ms,raw,env_in,filtered_raw,fast,slow,a,sigma,z,phase,armed,state,down,up,press_class`
+`t_ms,raw,env_in,filtered_raw_hp,rms_state,rest_center,rest_scale,u,lf_energy,artifact_ratio,artifact_score,artifact_gated,rest_confident,phase,armed,state,down,up,press_class`
 
 Safe shutdown:
 - Prefer normal app close / Ctrl+C before unplugging ESP32.
-- If unplug occurs during runtime, apps should stay alive and auto-reconnect when port returns.
+- If unplug occurs during runtime, apps should stay alive and auto-reconnect.
 
 Recovery checklist:
 1. `ls /dev/cu.usbserial* /dev/tty.usbserial* 2>/dev/null`
-2. Ensure single owner: `pkill -f \"pyserial-miniterm|reson-debug|reson-gui\"`
+2. Ensure single owner: `pkill -f "pyserial-miniterm|reson-debug|reson-gui"`
 3. Relaunch one app on one port.
 4. Validate stream with `pyserial-miniterm ... --raw` if needed.
 
 ## Extensibility notes
 
-- To replace threshold gating with ML, add new detector module(s) in `src/reson/` and keep detector output contract `rest|light|heavy`.
+- New detector modules should keep output contract `rest|light|heavy` and `EdgeEvent` compatibility.
 - Keep parser output shape stable (`EmgSample`) unless parser/tests/docs are updated together.
 
 ## Guardrails
 
-- Do not change serial protocol parsing without updating parser tests and docs in same change.
+- Do not change serial protocol parsing without updating parser tests and docs in the same change.
 - Keep `reson-debug` and `reson-gui` as distinct entrypoints.
-- Any behavioral change must include tests or updated acceptance checks.
+- Any behavioral change must include tests and docs updates.
