@@ -6,6 +6,18 @@ EMG-driven Morse input pipeline for ESP32 + AD8232 streams.
 
 `serial -> parser -> detector -> timing -> morse -> UI`
 
+## ESP32 firmware
+
+Firmware is versioned in this repo:
+
+- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream/esp32_emg_stream.ino`
+- `/Users/jeraldyuan/dev/reson/firmware/README.md`
+
+Serial contract expected by Reson:
+- space-delimited integer rows: `t raw env`
+- `baud=230400`
+- `~250 Hz` stream
+
 ## Install
 
 ```bash

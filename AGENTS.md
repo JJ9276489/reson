@@ -25,6 +25,9 @@ Run context:
 - Only one process can own the serial port at a time.
 - Debug app and GUI app are separate entrypoints and must not share a port concurrently.
 - Reson uses per-port lockfiles under `.reson_locks/`.
+- Firmware source of truth:
+  - `firmware/esp32_emg_stream/esp32_emg_stream.ino`
+  - `firmware/README.md`
 
 ## Calibration expectations
 
