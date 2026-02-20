@@ -1071,8 +1071,35 @@ class Hmm3EdgeDetector:
             return "light"
         return self._classify_segment(self._press_segment)
 
+    def _reset_after_stream_restart(self, t_ms: int) -> None:
+        # Keep learned profile parameters, but reset runtime decode/segment state.
+        self._phase = "ARMING"
+        self._bootstrap_start_ms = None
+        self._bootstrap_frames = []
+        self._decoded_stable = "REST"
+        self._decoded_pending = None
+        self._final_frame_index = -1
+        self._rest_conf_frames = 0
+        self._artifact_gated = False
+        self._await_rearm = False
+        self._press_segment = None
+        self._press_class_latched = None
+        self._rest_start_ms = t_ms
+        self._next_press_after_ms = t_ms
+        self._refractory_until_ms = t_ms
+        self._events = []
+        self._last_debug = None
+        self._dp_hist = []
+        self._bp_hist = []
+        self._frame_hist = []
+        self._prob_hist = []
+        self._decoded_upto = -1
+
     def update(self, sample: EmgSample) -> EdgeState:
         snap, frames = self.extractor.update(sample)
+        if self.extractor.reset_detected:
+            self._reset_after_stream_restart(sample.t_ms)
+
         if self._rest_start_ms is None:
             self._rest_start_ms = sample.t_ms
 

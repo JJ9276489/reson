@@ -345,8 +345,7 @@ class FeatureFrameExtractor:
         self.window_ms = max(int(window_ms), 20)
         self.hop_ms = max(int(hop_ms), 10)
         self._next_frame_end_ms: int | None = None
-
-        self._engine = RawFeatureEngine(
+        self._engine_kwargs = dict(
             tau_baseline_ms=tau_baseline_ms,
             filter_enabled=filter_enabled,
             hp_hz=hp_hz,
@@ -359,6 +358,9 @@ class FeatureFrameExtractor:
             slope_fast_tau_ms=slope_fast_tau_ms,
             slope_slow_tau_ms=slope_slow_tau_ms,
         )
+        self._engine = RawFeatureEngine(**self._engine_kwargs)
+        self._last_t_ms: int | None = None
+        self.reset_detected = False
 
         # (t_ms, filtered_raw_hp, lf_energy, slope_burst, env_in)
         self._samples: deque[tuple[int, float, float, float, int]] = deque()
@@ -367,7 +369,20 @@ class FeatureFrameExtractor:
     def engine(self) -> RawFeatureEngine:
         return self._engine
 
+    def _reset_timebase(self, t_ms: int) -> None:
+        self._engine = RawFeatureEngine(**self._engine_kwargs)
+        self._samples.clear()
+        self._next_frame_end_ms = t_ms + self.window_ms
+
     def update(self, sample: EmgSample) -> tuple[FeatureSnapshot, list[FeatureFrame]]:
+        self.reset_detected = False
+        if self._last_t_ms is not None and sample.t_ms + self.hop_ms < self._last_t_ms:
+            # Device-side timestamp rewind (common after ESP32 reset/replug).
+            # Reset local frame scheduler so downstream detectors do not freeze.
+            self.reset_detected = True
+            self._reset_timebase(sample.t_ms)
+        self._last_t_ms = sample.t_ms
+
         snap = self._engine.update(sample)
         self._samples.append((sample.t_ms, snap.filtered_raw_hp, snap.lf_energy, snap.slope_burst, sample.env))
         if self._next_frame_end_ms is None:
