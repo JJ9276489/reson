@@ -14,6 +14,12 @@ Both targets use the same stream contract:
 - Baud: `230400`
 - Target sample rate: `~250 Hz`
 
+## Wiring (current prototype)
+
+- AD8232 `3.3V` -> ESP32 `3V3`
+- AD8232 `GND` -> ESP32 `GND`
+- AD8232 `OUTPUT` -> ESP32 `GPIO34`
+
 Example line:
 
 ```text

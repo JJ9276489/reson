@@ -29,6 +29,9 @@ Run context:
   - `firmware/esp32_emg_stream/esp32_emg_stream.ino`
   - `firmware/esp32_emg_stream_cpp/` (PlatformIO C++)
   - `firmware/README.md`
+- Hardware reference:
+  - prototype image at `docs/images/hardware_setup.jpg`
+  - wiring: AD8232 `3.3V->3V3`, `GND->GND`, `OUTPUT->GPIO34`
 
 ## Calibration expectations
 

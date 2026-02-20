@@ -33,6 +33,29 @@ make firmware-upload
 make firmware-monitor
 ```
 
+## Hardware setup
+
+Prototype photo:
+
+![Reson hardware prototype](docs/images/hardware_setup.jpg)
+
+Current wiring (AD8232 -> ESP32):
+
+| AD8232 pin | ESP32 pin |
+| --- | --- |
+| `3.3V` | `3V3` |
+| `GND` | `GND` |
+| `OUTPUT` | `GPIO34` |
+
+Notes:
+- `LO+` / `LO-` are not used by current firmware.
+- Current prototype uses ECG-grade front-end hardware (AD8232) for jaw EMG experimentation.
+- This is a non-medical prototype and is not intended for diagnosis or treatment.
+
+Electrode guidance (masseter tests):
+- Place one active electrode over the masseter region, one nearby reference, and one reference/ground on a relatively low-motion area.
+- Keep cable strain low and skin prep consistent to reduce motion artifacts.
+
 ## Install
 
 ```bash
