@@ -30,9 +30,18 @@ Example line:
 ## Flash (PlatformIO path)
 
 ```bash
+cd /Users/jeraldyuan/dev/reson
+python -m pip install -r requirements-firmware.txt
 cd /Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp
 pio run -t upload
 pio device monitor -b 230400
+```
+
+Or from repo root:
+
+```bash
+make firmware-upload
+make firmware-monitor
 ```
 
 ## Verify stream from terminal

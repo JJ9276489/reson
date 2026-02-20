@@ -102,6 +102,12 @@ python -m pip install '.[dev]'
 
 Use Python 3.11/3.12 (not 3.14).
 
+Firmware tooling (PlatformIO):
+
+```bash
+python -m pip install -r requirements-firmware.txt
+```
+
 Test:
 
 ```bash
@@ -113,6 +119,13 @@ Run:
 ```bash
 reson-debug --port ... --baud 230400 --detector hmm3
 reson-gui --port ... --baud 230400 --detector hmm3
+```
+
+Firmware helpers:
+
+```bash
+make firmware-upload
+make firmware-monitor
 ```
 
 Debug replay logging:

@@ -19,6 +19,20 @@ Serial contract expected by Reson:
 - `baud=230400`
 - `~250 Hz` stream
 
+Firmware tooling install:
+
+```bash
+cd /Users/jeraldyuan/dev/reson
+python -m pip install -r requirements-firmware.txt
+```
+
+Convenience commands:
+
+```bash
+make firmware-upload
+make firmware-monitor
+```
+
 ## Install
 
 ```bash
