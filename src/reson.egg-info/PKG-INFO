@@ -21,79 +21,140 @@ EMG-driven Morse input pipeline for ESP32 + AD8232 streams.
 ## Install
 
 ```bash
-cd /Users/jeraldyuan/Desktop/fun/reson
-conda deactivate
+cd /Users/jeraldyuan/dev/reson
 /opt/homebrew/bin/python3.11 -m venv .venv
 source .venv/bin/activate
-pip install '.[dev]'
+python -m ensurepip --upgrade
+python -m pip install -U pip setuptools wheel
+python -m pip install '.[dev]'
 ```
 
-Use Python 3.11 or 3.12. Python 3.14 currently causes unreliable editable installs and Qt runtime issues on macOS for this project.
-On some Python 3.11 builds, editable installs (`-e`) may be skipped because `__editable__*.pth` is treated as hidden. If `reson-debug` cannot import `reson`, reinstall non-editable with `pip install '.[dev]'`.
-If Qt reports missing `cocoa` plugin, force-reinstall PySide6 in the pinned range:
-`python -m pip install --force-reinstall 'PySide6>=6.7,<6.8' 'PySide6_Addons>=6.7,<6.8' 'PySide6_Essentials>=6.7,<6.8' 'shiboken6>=6.7,<6.8'`
+Supported Python: 3.11 / 3.12.  
+Unsupported: 3.14.
 
 Terminal-first guidance:
 - On macOS, launch `reson-debug` and `reson-gui` from the native Terminal app.
-- VS Code integrated terminal is best-effort for Qt apps and may be unstable depending on environment.
+- VS Code integrated terminal is best-effort for Qt apps.
 
 ## Run
 
 Debug monitor:
 
 ```bash
-reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --window-sec 10
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --window-sec 10 --detector hmm3
 ```
 
 GUI app:
 
 ```bash
-reson-gui --port /dev/cu.usbserial-XXXX --baud 230400
+reson-gui --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3
 ```
 
-`--port` is optional. If omitted, reson attempts auto-detect.
+`--port` is optional (auto-detect fallback).  
+Only one process may own a serial port at once; Reson enforces lockfiles under `.reson_locks/`.
 
-Serial ownership rule:
-- Only one process can open a serial port at a time.
-- Reson now enforces this with a lockfile and exits with a clear message if port is already in use.
+## Detector modes
 
-## Calibration
+- `hmm3` (default): v2.5.2 3-state decoder (`REST/PRESS/ARTIFACT`) + segment-level `light/heavy` at `UP`.
+- `adaptive`: v2.4 raw-first adaptive detector.
+- `threshold`: legacy threshold fallback.
 
-On first GUI run, a startup calibration profile is built from three capture windows:
+## v2.5.2 core algorithm (hmm3)
 
-1. Rest
-2. Light clench
-3. Heavy clench
+Signal path:
+- Decisions use `raw` only.
+- `env_in` is debug/log only.
+- `raw -> filtered_raw_hp -> framed features -> logistic emissions -> fixed-lag Viterbi`.
 
-Profile is saved to `.reson_profile.json` in the repo root.
+Frame settings:
+- Window `120 ms`, hop `30 ms`.
+- Timestamp-based framing from `t_ms` (not fixed sample count).
 
-## Safe shutdown / unplug
+Features (default):
+- `rms_state`
+- `lf_energy_ratio`
+- `slope_burst`
+- `waveform_length`
 
-- Preferred flow: close `reson-debug`/`reson-gui` (or Ctrl+C) before unplugging ESP32.
-- If you unplug accidentally while app is running, the app stays alive and auto-retries reconnect.
-- Replug the device and wait; streaming should resume without restarting the app.
+Decode:
+- States: `REST`, `PRESS`, `ARTIFACT`.
+- Emissions: multiclass logistic regression.
+- HMM: fixed-lag Viterbi (`lag_frames=4`).
+- Transition blend: `A_final = 0.8 * A_prior + 0.2 * A_estimated`.
 
-## Recovery playbook
+Safety/event layer:
+- `DOWN` on confirmed `REST->PRESS` (dwell-gated).
+- `UP` on confirmed `PRESS->REST` (release dwell-gated).
+- Keeps `min_event_ms`, `refractory_ms`, `min_rest_gap_ms`, blip policy.
+- If `ARTIFACT` occurs mid-press: cancel active segment, emit no `UP`, require REST re-arm.
 
-1. Check serial device names:
-`ls /dev/cu.usbserial* /dev/tty.usbserial* 2>/dev/null`
-2. Make sure no competing process owns the port:
-`pkill -f \"pyserial-miniterm|reson-debug|reson-gui\"`
-3. Start one app only:
-- `reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --window-sec 10`
-- or `reson-gui --port /dev/cu.usbserial-XXXX --baud 230400`
-4. If no lines appear, test raw stream:
-`pyserial-miniterm /dev/cu.usbserial-XXXX 230400 --raw`
+Segment-level light/heavy (at `UP` only):
+- Segment stats: `duration_ms`, `peak_u`, `auc_u`, `mean_u`.
+- Heavy if any 2 of 4 thresholds pass; else light.
 
-## Behavior
+Runtime adaptation:
+- Normalization drift updates are allowed only when:
+  - decoded state is `REST`
+  - no pending transition
+  - rest-confidence frame minimum is met
+  - artifact gate is off
+- Drift is bounded by per-feature caps (`drift_cap_per_min`).
 
-- Edge detector outputs `rest`, `light`, `heavy`.
-- Light press produces dot; heavy press produces dash.
-- Rest gaps resolve buffered symbols into letters/spaces with adaptive Morse timing.
-- Focus target can toggle between text and backspace using a reserved control token.
+Startup phases:
+- `BOOTSTRAP` -> `ARMING` -> `RUNNING`
+- No Morse lifecycle events before `RUNNING`.
+
+## Calibration / profile
+
+Profile file: `.reson_profile.json`
+
+Calibration is optional for runtime startup, but recommended for quality.  
+Profile contains v2.5.2 keys:
+- `model_version`
+- `detector_mode`
+- `feature_config`
+- `feature_hash`
+- `normalization`
+- `classifier`
+- `hmm`
+- `segment_thresholds`
+- `decision_gates`
+- `metadata`
+
+Runtime hard-fails if profile `feature_hash` does not match runtime feature ordering.
+
+## Debug monitor telemetry
+
+`reson-debug` panes:
+1. raw + filtered
+2. feature traces
+3. emission probabilities (`p_rest`, `p_press`, `p_artifact`)
+4. decoded state with DOWN/UP markers
+
+Optional replay log:
+
+```bash
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --log-file debug_log.csv
+```
+
+Locked CSV order:
+`t_ms,raw,env_in,filtered_raw_hp,rms_state,lf_energy_ratio,slope_burst,waveform_length,p_rest,p_press,p_artifact,decoded_state,phase,armed,artifact_gated,down,up,press_class,segment_duration_ms,segment_peak_u,segment_auc,segment_mean_u,segment_class`
+
+## Safe shutdown / recovery
+
+- Prefer normal app close (`Ctrl+C` or window close) before unplugging ESP32.
+- On unplug/replug, app remains alive and auto-retries serial reconnect.
+- To inspect stream directly:
+  - `pyserial-miniterm /dev/cu.usbserial-XXXX 230400 --raw`
+
+Recovery checklist:
+1. `ls /dev/cu.usbserial* /dev/tty.usbserial* 2>/dev/null`
+2. Ensure a single owner:
+   `pkill -f "pyserial-miniterm|reson-debug|reson-gui"`
+3. Launch one app on one port.
 
 ## Tests
 
 ```bash
-pytest -q
+python -m pytest -q
 ```

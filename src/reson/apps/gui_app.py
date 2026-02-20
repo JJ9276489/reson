@@ -136,7 +136,7 @@ class ResonWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Calibration",
-                "No .reson_profile.json found. Using adaptive detector defaults (calibration optional).",
+                "No .reson_profile.json found. Using built-in detector defaults (calibration optional).",
             )
         self.detector = make_detector(self.detector_mode, profile)
 
@@ -170,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Reson GUI")
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", type=int, default=230400)
-    parser.add_argument("--detector", choices=("adaptive", "threshold"), default="adaptive")
+    parser.add_argument("--detector", choices=("hmm3", "adaptive", "threshold"), default="hmm3")
     return parser
 
 

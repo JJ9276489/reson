@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
+import hashlib
 from math import cos, pi, sin, sqrt
 from statistics import median
 
@@ -291,4 +292,126 @@ class RawFeatureEngine:
             a=self.rms_state - self.rest_center,
             sigma=self.rest_scale,
             z=self.u,
+        )
+
+
+@dataclass(frozen=True)
+class FeatureFrame:
+    t_ms: int
+    window_start_ms: int
+    window_end_ms: int
+    env_in: int
+    filtered_raw_hp: float
+    rms_state: float
+    lf_energy_ratio: float
+    slope_burst: float
+    waveform_length: float
+
+    def as_vector(self, feature_order: Sequence[str]) -> list[float]:
+        values = {
+            "rms_state": self.rms_state,
+            "lf_energy_ratio": self.lf_energy_ratio,
+            "slope_burst": self.slope_burst,
+            "waveform_length": self.waveform_length,
+        }
+        return [float(values[name]) for name in feature_order]
+
+
+def compute_feature_hash(feature_order: Sequence[str]) -> str:
+    joined = "|".join(feature_order)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+class FeatureFrameExtractor:
+    """Timestamp-based sliding window feature extraction for hmm3 mode."""
+
+    def __init__(
+        self,
+        *,
+        window_ms: int = 120,
+        hop_ms: int = 30,
+        tau_baseline_ms: float = 2000.0,
+        filter_enabled: bool = True,
+        hp_hz: float = 20.0,
+        lp_hz: float = 230.0,
+        notch_hz: float = 60.0,
+        notch_q: float = 20.0,
+        sample_hz_hint: int = 250,
+        rest_scale_floor: float = 5.0,
+        artifact_lf_hz: float = 10.0,
+        slope_fast_tau_ms: float = 40.0,
+        slope_slow_tau_ms: float = 400.0,
+    ):
+        self.window_ms = max(int(window_ms), 20)
+        self.hop_ms = max(int(hop_ms), 10)
+        self._next_frame_end_ms: int | None = None
+
+        self._engine = RawFeatureEngine(
+            tau_baseline_ms=tau_baseline_ms,
+            filter_enabled=filter_enabled,
+            hp_hz=hp_hz,
+            lp_hz=lp_hz,
+            notch_hz=notch_hz,
+            notch_q=notch_q,
+            sample_hz_hint=sample_hz_hint,
+            rest_scale_floor=rest_scale_floor,
+            artifact_lf_hz=artifact_lf_hz,
+            slope_fast_tau_ms=slope_fast_tau_ms,
+            slope_slow_tau_ms=slope_slow_tau_ms,
+        )
+
+        # (t_ms, filtered_raw_hp, lf_energy, slope_burst, env_in)
+        self._samples: deque[tuple[int, float, float, float, int]] = deque()
+
+    @property
+    def engine(self) -> RawFeatureEngine:
+        return self._engine
+
+    def update(self, sample: EmgSample) -> tuple[FeatureSnapshot, list[FeatureFrame]]:
+        snap = self._engine.update(sample)
+        self._samples.append((sample.t_ms, snap.filtered_raw_hp, snap.lf_energy, snap.slope_burst, sample.env))
+        if self._next_frame_end_ms is None:
+            self._next_frame_end_ms = sample.t_ms + self.window_ms
+
+        frames: list[FeatureFrame] = []
+        while self._next_frame_end_ms is not None and sample.t_ms >= self._next_frame_end_ms:
+            frame = self._build_frame(self._next_frame_end_ms)
+            if frame is not None:
+                frames.append(frame)
+            self._next_frame_end_ms += self.hop_ms
+
+        min_keep_t = sample.t_ms - (self.window_ms * 4)
+        while self._samples and self._samples[0][0] < min_keep_t:
+            self._samples.popleft()
+
+        return snap, frames
+
+    def _build_frame(self, frame_end_ms: int) -> FeatureFrame | None:
+        frame_start_ms = frame_end_ms - self.window_ms
+        points = [item for item in self._samples if frame_start_ms <= item[0] <= frame_end_ms]
+        if len(points) < 2:
+            return None
+
+        filtered = [p[1] for p in points]
+        lf_vals = [p[2] for p in points]
+        slope_vals = [p[3] for p in points]
+        env_vals = [p[4] for p in points]
+
+        n = len(filtered)
+        rms = sqrt(sum(x * x for x in filtered) / n)
+        lf_rms = sqrt(sum(x * x for x in lf_vals) / n)
+        lf_ratio = lf_rms / max(rms, 1e-6)
+        waveform_length = sum(abs(filtered[i] - filtered[i - 1]) for i in range(1, n))
+        slope_med = median(slope_vals)
+
+        return FeatureFrame(
+            t_ms=frame_end_ms,
+            window_start_ms=frame_start_ms,
+            window_end_ms=frame_end_ms,
+            env_in=env_vals[-1],
+            filtered_raw_hp=filtered[-1],
+            rms_state=rms,
+            lf_energy_ratio=lf_ratio,
+            slope_burst=float(slope_med),
+            waveform_length=float(waveform_length),
         )

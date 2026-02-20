@@ -30,41 +30,50 @@ Run context:
 
 - Calibration is optional.
 - If `.reson_profile.json` is present, detector tuning defaults are loaded.
-- If absent, adaptive detector runs with built-in defaults.
-- Profile generation still uses rest/light/heavy stages.
+- If absent, detector uses built-in defaults.
 
-## Detector and timing behavior (v2.4.1)
+## Detector behavior (v2.5.2 locked)
 
-- Adaptive detector is raw-first:
-  - use `raw` for detection
-  - treat incoming `env` as debug-only
-  - process: `raw -> filtered_raw_hp -> rms_state -> u -> state machine`
-- RMS-state normalization:
-  - `u = (rms_state - rest_center) / max(rest_scale, rest_scale_floor)`
-  - `rest_center` and `rest_scale` are REST-only robust stats
-- REST-only learning guard:
-  - update `baseline_raw`, `rest_center`, `rest_scale` only when:
-    - stable state is `rest`
-    - no pending transition
-    - `rest_confident` true
-    - artifact gate off
-- Startup phases:
-  - `BOOTSTRAP`: quiet-window initialization
-  - `ARMING`: wait for confident REST
-  - `RUNNING`: emit DOWN/UP
-- Artifact gate:
-  - based on low-frequency energy ratio + slope burst
-  - while gated: force REST candidate, suppress DOWN/UP, clear pending/dwell, restart rest-confidence timer
-- Stable states: `rest`, `light`, `heavy`
-- Lifecycle events:
-  - `DOWN` on confirmed `rest -> light/heavy`
-  - `UP` on confirmed return to REST
-  - press class latched from DOWN until UP
-- Morse safety gates stay enabled:
-  - min dwell
-  - min event duration + blip policy
-  - min REST gap before next accepted press
-  - refractory after release
+- Default mode is `hmm3`.
+- Decisions use `raw` only; `env_in` is debug-only.
+- Decoder states: `REST`, `PRESS`, `ARTIFACT`.
+- Processing: timestamp-based framed features -> logistic emissions -> fixed-lag Viterbi.
+
+Feature defaults:
+- `window_ms=120`
+- `hop_ms=30`
+- `feature_order = [rms_state, lf_energy_ratio, slope_burst, waveform_length]`
+
+Runtime normalization/adaptation:
+- Runtime adaptation updates only when:
+  - decoded state is `REST`
+  - pending transition is `None`
+  - rest-confidence frame minimum is met
+  - artifact gate is off
+- Runtime adaptation uses bounded drift caps per minute.
+
+Transition model:
+- `A_final = 0.8 * A_prior + 0.2 * A_estimated`.
+- ARTIFACT should prefer self/REST, not direct PRESS.
+
+Lifecycle events:
+- Emit `DOWN` on confirmed `REST->PRESS` after enter dwell.
+- Emit `UP` on confirmed `PRESS->REST` after release dwell.
+- Keep min-event/refractory/rest-gap and blip policy.
+- If ARTIFACT appears mid-press:
+  - cancel active segment
+  - emit no `UP`
+  - require REST re-arm before next press
+
+Segment class mapping:
+- `light/heavy` is decided only at `UP` from segment stats:
+  - `duration_ms`, `peak_u`, `auc_u`, `mean_u`
+- Heavy if any 2 of 4 heavy thresholds pass; otherwise light.
+
+Startup phases:
+- `BOOTSTRAP`: collect quiet windows and initialize normalization.
+- `ARMING`: require REST confidence.
+- `RUNNING`: allow lifecycle events.
 
 ## Control tokens
 
@@ -98,8 +107,8 @@ python -m pytest -q
 Run:
 
 ```bash
-reson-debug --port ... --baud 230400 --detector adaptive
-reson-gui --port ... --baud 230400 --detector adaptive
+reson-debug --port ... --baud 230400 --detector hmm3
+reson-gui --port ... --baud 230400 --detector hmm3
 ```
 
 Debug replay logging:
@@ -109,7 +118,7 @@ reson-debug --port ... --baud 230400 --log-file debug_log.csv
 ```
 
 Logged fields:
-`t_ms,raw,env_in,filtered_raw_hp,rms_state,rest_center,rest_scale,u,lf_energy,artifact_ratio,artifact_score,artifact_gated,rest_confident,phase,armed,state,down,up,press_class`
+`t_ms,raw,env_in,filtered_raw_hp,rms_state,lf_energy_ratio,slope_burst,waveform_length,p_rest,p_press,p_artifact,decoded_state,phase,armed,artifact_gated,down,up,press_class,segment_duration_ms,segment_peak_u,segment_auc,segment_mean_u,segment_class`
 
 Safe shutdown:
 - Prefer normal app close / Ctrl+C before unplugging ESP32.
@@ -123,7 +132,8 @@ Recovery checklist:
 
 ## Extensibility notes
 
-- New detector modules should keep output contract `rest|light|heavy` and `EdgeEvent` compatibility.
+- New detector modules must keep external `EdgeEvent` compatibility.
+- Keep `make_detector(mode, profile)` stable and preserve `threshold` fallback mode.
 - Keep parser output shape stable (`EmgSample`) unless parser/tests/docs are updated together.
 
 ## Guardrails

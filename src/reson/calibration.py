@@ -1,12 +1,193 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
+from math import exp, log
 from pathlib import Path
 from statistics import median
+from typing import Any
+
+from reson.features import compute_feature_hash
 
 
 PROFILE_PATH = Path(".reson_profile.json")
+
+
+def _percentile(values: list[int], p: float) -> float:
+    if not values:
+        raise CalibrationError("Calibration sample set is empty")
+    idx = int((len(values) - 1) * p)
+    sorted_vals = sorted(values)
+    return float(sorted_vals[idx])
+
+
+def _safe_log(value: float) -> float:
+    return log(max(value, 1e-9))
+
+
+def _log_row(row: list[float]) -> list[float]:
+    total = sum(max(v, 0.0) for v in row)
+    if total <= 0:
+        n = max(len(row), 1)
+        return [_safe_log(1.0 / n) for _ in row]
+    probs = [max(v, 0.0) / total for v in row]
+    return [_safe_log(v) for v in probs]
+
+
+def blend_transition_probs(
+    prior: list[list[float]],
+    estimated: list[list[float]],
+    prior_weight: float = 0.8,
+) -> list[list[float]]:
+    prior_weight = min(max(prior_weight, 0.0), 1.0)
+    est_weight = 1.0 - prior_weight
+    out: list[list[float]] = []
+    for row_p, row_e in zip(prior, estimated):
+        row = [(prior_weight * p) + (est_weight * e) for p, e in zip(row_p, row_e)]
+        total = sum(max(v, 0.0) for v in row)
+        if total <= 0:
+            n = max(len(row), 1)
+            out.append([1.0 / n for _ in row])
+        else:
+            out.append([max(v, 0.0) / total for v in row])
+    return out
+
+
+def _default_feature_order() -> list[str]:
+    return ["rms_state", "lf_energy_ratio", "slope_burst", "waveform_length"]
+
+
+def _default_feature_config() -> dict[str, Any]:
+    return {
+        "window_ms": 120,
+        "hop_ms": 30,
+        "feature_order": _default_feature_order(),
+    }
+
+
+def _default_feature_hash() -> str:
+    return compute_feature_hash(_default_feature_order())
+
+
+def _default_normalization() -> dict[str, Any]:
+    return {
+        "center": {
+            "rms_state": 0.0,
+            "lf_energy_ratio": 0.0,
+            "slope_burst": 0.0,
+            "waveform_length": 0.0,
+        },
+        "scale": {
+            "rms_state": 1.0,
+            "lf_energy_ratio": 1.0,
+            "slope_burst": 1.0,
+            "waveform_length": 1.0,
+        },
+        "floor": {
+            "rms_state": 1.0,
+            "lf_energy_ratio": 0.25,
+            "slope_burst": 0.25,
+            "waveform_length": 1.0,
+        },
+        "drift_cap_per_min": {
+            "rms_state": 0.5,
+            "lf_energy_ratio": 0.25,
+            "slope_burst": 0.25,
+            "waveform_length": 0.5,
+        },
+    }
+
+
+def _default_classifier() -> dict[str, Any]:
+    # Classes: REST, PRESS, ARTIFACT. Weights align with _default_feature_order.
+    return {
+        "classes": ["REST", "PRESS", "ARTIFACT"],
+        "weights": [
+            [-2.2, -0.7, -0.6, -1.4],
+            [2.4, -0.8, -0.7, 1.8],
+            [0.1, 2.2, 2.4, 0.2],
+        ],
+        "bias": [1.4, -1.0, -1.2],
+    }
+
+
+def _default_hmm() -> dict[str, Any]:
+    states = ["REST", "PRESS", "ARTIFACT"]
+    start_probs = [0.90, 0.05, 0.05]
+    transition_prior_prob = [
+        [0.93, 0.05, 0.02],
+        [0.10, 0.85, 0.05],
+        [0.35, 0.03, 0.62],
+    ]
+    transition_est_prob = [
+        [0.90, 0.07, 0.03],
+        [0.12, 0.82, 0.06],
+        [0.40, 0.02, 0.58],
+    ]
+    transition_final_prob = blend_transition_probs(transition_prior_prob, transition_est_prob, prior_weight=0.8)
+    return {
+        "states": states,
+        "start_logp": [_safe_log(v) for v in start_probs],
+        "transition_logp_prior": [_log_row(row) for row in transition_prior_prob],
+        "transition_logp_est": [_log_row(row) for row in transition_est_prob],
+        "transition_logp_final": [_log_row(row) for row in transition_final_prob],
+        "lag_frames": 4,
+    }
+
+
+def _default_segment_thresholds() -> dict[str, float]:
+    return {
+        "dur_heavy_ms": 220.0,
+        "peak_heavy_u": 2.0,
+        "auc_heavy": 260.0,
+        "mean_heavy_u": 1.3,
+    }
+
+
+def _default_decision_gates() -> dict[str, int]:
+    return {
+        "enter_dwell_frames": 3,
+        "release_dwell_frames": 3,
+        "min_event_ms": 60,
+        "refractory_ms": 90,
+        "min_rest_gap_ms": 140,
+        "rest_conf_frames_min": 3,
+    }
+
+
+def _default_metadata() -> dict[str, Any]:
+    return {
+        "notes": "Default hmm3 model",
+    }
+
+
+@dataclass(frozen=True)
+class Hmm3Model:
+    model_version: int = 5
+    detector_mode: str = "hmm3"
+    feature_config: dict[str, Any] = field(default_factory=_default_feature_config)
+    feature_hash: str = field(default_factory=_default_feature_hash)
+    normalization: dict[str, Any] = field(default_factory=_default_normalization)
+    classifier: dict[str, Any] = field(default_factory=_default_classifier)
+    hmm: dict[str, Any] = field(default_factory=_default_hmm)
+    segment_thresholds: dict[str, Any] = field(default_factory=_default_segment_thresholds)
+    decision_gates: dict[str, Any] = field(default_factory=_default_decision_gates)
+    metadata: dict[str, Any] = field(default_factory=_default_metadata)
+
+    @classmethod
+    def from_profile(cls, profile: CalibrationProfile) -> "Hmm3Model":
+        return cls(
+            model_version=profile.model_version,
+            detector_mode=profile.detector_mode,
+            feature_config=profile.feature_config,
+            feature_hash=profile.feature_hash,
+            normalization=profile.normalization,
+            classifier=profile.classifier,
+            hmm=profile.hmm,
+            segment_thresholds=profile.segment_thresholds,
+            decision_gates=profile.decision_gates,
+            metadata=profile.metadata,
+        )
 
 
 @dataclass(frozen=True)
@@ -17,7 +198,7 @@ class CalibrationProfile:
     heavy_threshold: float = 40.0
     hysteresis_margin: float = 2.0
 
-    # Adaptive detector tuning defaults (v2.4.1 RMS-state model).
+    # Adaptive detector tuning defaults (v2.4.x path).
     u_light_enter: float = 1.0
     u_light_exit: float = 0.8
     u_heavy_enter: float = 2.0
@@ -46,20 +227,25 @@ class CalibrationProfile:
     artifact_lf_hz: float = 10.0
     slope_fast_tau_ms: float = 40.0
     slope_slow_tau_ms: float = 400.0
+
+    # Hmm3 model payload (v2.5.2 schema keys).
+    model_version: int = 5
+    detector_mode: str = "hmm3"
+    feature_config: dict[str, Any] = field(default_factory=_default_feature_config)
+    feature_hash: str = field(default_factory=_default_feature_hash)
+    normalization: dict[str, Any] = field(default_factory=_default_normalization)
+    classifier: dict[str, Any] = field(default_factory=_default_classifier)
+    hmm: dict[str, Any] = field(default_factory=_default_hmm)
+    segment_thresholds: dict[str, Any] = field(default_factory=_default_segment_thresholds)
+    decision_gates: dict[str, Any] = field(default_factory=_default_decision_gates)
+    metadata: dict[str, Any] = field(default_factory=_default_metadata)
+
     separation_ok: bool = True
-    profile_version: int = 3
+    profile_version: int = 4
 
 
 class CalibrationError(RuntimeError):
     pass
-
-
-def _percentile(values: list[int], p: float) -> float:
-    if not values:
-        raise CalibrationError("Calibration sample set is empty")
-    idx = int((len(values) - 1) * p)
-    sorted_vals = sorted(values)
-    return float(sorted_vals[idx])
 
 
 def build_profile(rest_env: list[int], light_env: list[int], heavy_env: list[int]) -> CalibrationProfile:
