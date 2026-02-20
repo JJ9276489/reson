@@ -1,11 +1,16 @@
 # Firmware
 
-This folder contains the ESP32 sketch used by Reson.
+This folder contains both the legacy Arduino sketch and the modular C++ PlatformIO firmware.
 
-## Sketch
+## Available firmware targets
 
-- Path: `firmware/esp32_emg_stream/esp32_emg_stream.ino`
-- Output contract: `t raw env` (space-delimited integers)
+1. Arduino sketch (legacy):
+   - Path: `firmware/esp32_emg_stream/esp32_emg_stream.ino`
+2. PlatformIO C++ (recommended for future IMU work):
+   - Path: `firmware/esp32_emg_stream_cpp/`
+
+Both targets use the same stream contract:
+- Output: `t raw env` (space-delimited integers)
 - Baud: `230400`
 - Target sample rate: `~250 Hz`
 
@@ -15,12 +20,20 @@ Example line:
 12345 2089 37
 ```
 
-## Flash
+## Flash (Arduino IDE path)
 
 1. Open `firmware/esp32_emg_stream/esp32_emg_stream.ino` in Arduino IDE.
-2. Select your ESP32 board and serial port.
-3. Upload the sketch.
-4. Open serial monitor (or use `pyserial-miniterm`) at `230400`.
+2. Select ESP32 board and serial port.
+3. Upload.
+4. Open serial monitor (or `pyserial-miniterm`) at `230400`.
+
+## Flash (PlatformIO path)
+
+```bash
+cd /Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp
+pio run -t upload
+pio device monitor -b 230400
+```
 
 ## Verify stream from terminal
 

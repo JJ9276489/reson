@@ -11,6 +11,7 @@ EMG-driven Morse input pipeline for ESP32 + AD8232 streams.
 Firmware is versioned in this repo:
 
 - `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream/esp32_emg_stream.ino`
+- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp/` (PlatformIO C++)
 - `/Users/jeraldyuan/dev/reson/firmware/README.md`
 
 Serial contract expected by Reson:

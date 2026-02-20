@@ -27,6 +27,7 @@ Run context:
 - Reson uses per-port lockfiles under `.reson_locks/`.
 - Firmware source of truth:
   - `firmware/esp32_emg_stream/esp32_emg_stream.ino`
+  - `firmware/esp32_emg_stream_cpp/` (PlatformIO C++)
   - `firmware/README.md`
 
 ## Calibration expectations
