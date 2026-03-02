@@ -63,4 +63,4 @@ If no data appears, press ESP32 reset once.
 If you change the serial row format, update parser/tests/docs together:
 - `src/reson/parser.py`
 - tests for parser/pipeline
-- `README.md` and `AGENTS.md`
+- `README.md`

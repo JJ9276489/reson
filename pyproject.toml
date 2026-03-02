@@ -22,6 +22,7 @@ dev = [
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"
 reson-gui = "reson.apps.gui_app:main"
+reson-calibrate-hmm3 = "reson.apps.calibrate_hmm3:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

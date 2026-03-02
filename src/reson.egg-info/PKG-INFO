@@ -18,6 +18,56 @@ EMG-driven Morse input pipeline for ESP32 + AD8232 streams.
 
 `serial -> parser -> detector -> timing -> morse -> UI`
 
+## ESP32 firmware
+
+Firmware is versioned in this repo:
+
+- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream/esp32_emg_stream.ino`
+- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp/` (PlatformIO C++)
+- `/Users/jeraldyuan/dev/reson/firmware/README.md`
+
+Serial contract expected by Reson:
+- space-delimited integer rows: `t raw env`
+- `baud=230400`
+- `~250 Hz` stream
+
+Firmware tooling install:
+
+```bash
+cd /Users/jeraldyuan/dev/reson
+python -m pip install -r requirements-firmware.txt
+```
+
+Convenience commands:
+
+```bash
+make firmware-upload
+make firmware-monitor
+```
+
+## Hardware setup
+
+Prototype photo:
+
+![Reson hardware prototype](docs/images/hardware_setup.jpg)
+
+Current wiring (AD8232 -> ESP32):
+
+| AD8232 pin | ESP32 pin |
+| --- | --- |
+| `3.3V` | `3V3` |
+| `GND` | `GND` |
+| `OUTPUT` | `GPIO34` |
+
+Notes:
+- `LO+` / `LO-` are not used by current firmware.
+- Current prototype uses ECG-grade front-end hardware (AD8232) for jaw EMG experimentation.
+- This is a non-medical prototype and is not intended for diagnosis or treatment.
+
+Electrode guidance (masseter tests):
+- Place one active electrode over the masseter region, one nearby reference, and one reference/ground on a relatively low-motion area.
+- Keep cable strain low and skin prep consistent to reduce motion artifacts.
+
 ## Install
 
 ```bash
@@ -122,6 +172,18 @@ Profile contains v2.5.2 keys:
 - `metadata`
 
 Runtime hard-fails if profile `feature_hash` does not match runtime feature ordering.
+
+Guided calibration command:
+
+```bash
+reson-calibrate-hmm3 --port /dev/cu.usbserial-XXXX --baud 230400
+```
+
+Default staged flow:
+- REST 20s
+- PRESS_LIGHT 10s
+- PRESS_HEAVY 10s
+- ARTIFACT 20s
 
 ## Debug monitor telemetry
 

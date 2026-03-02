@@ -161,6 +161,18 @@ Profile contains v2.5.2 keys:
 
 Runtime hard-fails if profile `feature_hash` does not match runtime feature ordering.
 
+Guided calibration command:
+
+```bash
+reson-calibrate-hmm3 --port /dev/cu.usbserial-XXXX --baud 230400
+```
+
+Default staged flow:
+- REST 20s
+- PRESS_LIGHT 10s
+- PRESS_HEAVY 10s
+- ARTIFACT 20s
+
 ## Debug monitor telemetry
 
 `reson-debug` panes:

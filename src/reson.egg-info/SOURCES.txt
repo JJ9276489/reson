@@ -20,6 +20,7 @@ src/reson.egg-info/entry_points.txt
 src/reson.egg-info/requires.txt
 src/reson.egg-info/top_level.txt
 src/reson/apps/__init__.py
+src/reson/apps/calibrate_hmm3.py
 src/reson/apps/debug_monitor.py
 src/reson/apps/gui_app.py
 tests/test_artifact_gate_blocks_presses.py
@@ -30,6 +31,7 @@ tests/test_edge_detector.py
 tests/test_heavy_hysteresis_no_flicker.py
 tests/test_hmm3_artifact_blocks_events.py
 tests/test_hmm3_artifact_midpress_cancel.py
+tests/test_hmm3_calibration_fit.py
 tests/test_hmm3_event_lifecycle.py
 tests/test_hmm3_feature_hash_guard.py
 tests/test_hmm3_irregular_timestamps.py
