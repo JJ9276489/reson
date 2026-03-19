@@ -71,12 +71,20 @@ class SerialWorker(QThread):
 
 
 class ResonWindow(QMainWindow):
-    def __init__(self, port: str, baud: int, lock_handle: PortLockHandle, detector_mode: str):
+    def __init__(
+        self,
+        port: str,
+        baud: int,
+        lock_handle: PortLockHandle,
+        detector_mode: str,
+        feature_ablation: str,
+    ):
         super().__init__()
         self.setWindowTitle("Reson Morse Input")
         self.port = port
         self.baud = baud
         self.detector_mode = detector_mode
+        self.feature_ablation = feature_ablation
         self.lock_handle = lock_handle
 
         self.detector: EdgeDetector | None = None
@@ -138,7 +146,11 @@ class ResonWindow(QMainWindow):
                 "Calibration",
                 "No .reson_profile.json found. Using built-in detector defaults (calibration optional).",
             )
-        self.detector = make_detector(self.detector_mode, profile)
+        self.detector = make_detector(
+            self.detector_mode,
+            profile,
+            feature_ablation=self.feature_ablation,
+        )
 
     def _on_sample(self, sample: EmgSample) -> None:
         if self.detector is None:
@@ -171,6 +183,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", type=int, default=230400)
     parser.add_argument("--detector", choices=("hmm3", "adaptive", "threshold"), default="hmm3")
+    parser.add_argument(
+        "--feature-ablation",
+        default="all",
+        help=(
+            "hmm3 emission feature subset. Presets: all, wl-only, rms-only. "
+            "Custom: comma list (e.g. rms_state,waveform_length)."
+        ),
+    )
     return parser
 
 
@@ -192,7 +212,7 @@ def main() -> None:
 
     print(
         f"[reson-gui] python={sys.version.split()[0]} pyside6={PySide6.__version__} "
-        f"port={resolved_port} baud={args.baud}",
+        f"port={resolved_port} baud={args.baud} detector={args.detector} ablation={args.feature_ablation}",
         file=sys.stderr,
     )
 
@@ -204,7 +224,13 @@ def main() -> None:
     signal.signal(signal.SIGINT, _graceful_exit)
     signal.signal(signal.SIGTERM, _graceful_exit)
 
-    win = ResonWindow(port=resolved_port, baud=args.baud, lock_handle=lock_handle, detector_mode=args.detector)
+    win = ResonWindow(
+        port=resolved_port,
+        baud=args.baud,
+        lock_handle=lock_handle,
+        detector_mode=args.detector,
+        feature_ablation=args.feature_ablation,
+    )
     win.resize(1200, 800)
     win.show()
 

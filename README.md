@@ -88,6 +88,24 @@ GUI app:
 reson-gui --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3
 ```
 
+Feature ablation (hmm3 emissions only), useful for quick feature impact checks:
+
+```bash
+# waveform-length-only emission features
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation wl-only
+
+# custom subset
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation rms_state,waveform_length
+```
+
+`--feature-ablation` options:
+- `all` (default, no ablation)
+- `wl-only`
+- `rms-only`
+- comma list of feature names (`rms_state,lf_energy_ratio,slope_burst,waveform_length`)
+
+Note: ablation masks emission model inputs only; segment `light/heavy` stats still use runtime `u` from normalized `rms_state`.
+
 `--port` is optional (auto-detect fallback).  
 Only one process may own a serial port at once; Reson enforces lockfiles under `.reson_locks/`.
 

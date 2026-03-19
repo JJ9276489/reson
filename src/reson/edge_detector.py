@@ -16,6 +16,71 @@ from reson.features import (
 )
 from reson.types import EdgeEvent, EdgeState, EmgSample
 
+_HMM3_FEATURE_ALIASES = {
+    "rms": "rms_state",
+    "rms_state": "rms_state",
+    "lf": "lf_energy_ratio",
+    "lf_ratio": "lf_energy_ratio",
+    "lf_energy_ratio": "lf_energy_ratio",
+    "slope": "slope_burst",
+    "slope_burst": "slope_burst",
+    "wave": "waveform_length",
+    "waveform": "waveform_length",
+    "waveform_length": "waveform_length",
+    "waveform-length": "waveform_length",
+    "wl": "waveform_length",
+}
+
+_HMM3_ABLATION_PRESETS = {
+    "all": None,
+    "none": None,
+    "wl-only": ("waveform_length",),
+    "waveform-only": ("waveform_length",),
+    "rms-only": ("rms_state",),
+}
+
+
+def _resolve_hmm3_feature_ablation(
+    feature_order: list[str],
+    ablation: str | None,
+) -> tuple[list[bool], tuple[str, ...], str]:
+    """Resolve ablation spec into a per-dimension emission mask.
+
+    Returns:
+      - mask aligned with feature_order (True=keep, False=ablate)
+      - kept feature names in feature_order order
+      - normalized ablation label
+    """
+
+    spec = (ablation or "all").strip().lower()
+    if spec in _HMM3_ABLATION_PRESETS:
+        preset = _HMM3_ABLATION_PRESETS[spec]
+        selected = set(feature_order if preset is None else preset)
+        label = "all" if preset is None else spec
+    else:
+        raw_tokens = spec
+        if spec.startswith("only:"):
+            raw_tokens = spec.split(":", 1)[1]
+        tokens = [tok.strip() for tok in raw_tokens.split(",") if tok.strip()]
+        if not tokens:
+            raise ValueError("hmm3 feature ablation resolved to no features")
+        selected: set[str] = set()
+        for tok in tokens:
+            canonical = _HMM3_FEATURE_ALIASES.get(tok, tok)
+            selected.add(canonical)
+        label = ",".join(tokens)
+
+    unknown = sorted(name for name in selected if name not in feature_order)
+    if unknown:
+        joined = ", ".join(unknown)
+        raise ValueError(f"hmm3 feature ablation includes unknown feature(s): {joined}")
+
+    kept = tuple(name for name in feature_order if name in selected)
+    if not kept:
+        raise ValueError("hmm3 feature ablation disabled all runtime features")
+    mask = [name in selected for name in feature_order]
+    return mask, kept, label
+
 
 class EdgeDetector(Protocol):
     def update(self, sample: EmgSample) -> EdgeState: ...
@@ -668,7 +733,12 @@ class _HmmPending:
 class Hmm3EdgeDetector:
     _STATE_ORDER = ("REST", "PRESS", "ARTIFACT")
 
-    def __init__(self, profile: CalibrationProfile | None = None):
+    def __init__(
+        self,
+        profile: CalibrationProfile | None = None,
+        *,
+        feature_ablation: str | None = None,
+    ):
         self.profile = profile or default_profile()
         self.model = Hmm3Model.from_profile(self.profile)
         self.feature_order = list(self.model.feature_config.get("feature_order", []))
@@ -677,6 +747,12 @@ class Hmm3EdgeDetector:
             raise ValueError(
                 "hmm3 feature hash mismatch: profile does not match runtime feature ordering"
             )
+        (
+            self._ablation_mask,
+            self._ablation_kept_features,
+            self._ablation_label,
+        ) = _resolve_hmm3_feature_ablation(self.feature_order, feature_ablation)
+        self._ablation_active = not all(self._ablation_mask)
 
         self.extractor = FeatureFrameExtractor(
             window_ms=int(self.model.feature_config.get("window_ms", 120)),
@@ -760,8 +836,19 @@ class Hmm3EdgeDetector:
         self._decoded_upto = -1
 
     @classmethod
-    def from_profile(cls, profile: CalibrationProfile | None) -> "Hmm3EdgeDetector":
-        return cls(profile=profile)
+    def from_profile(
+        cls,
+        profile: CalibrationProfile | None,
+        *,
+        feature_ablation: str | None = None,
+    ) -> "Hmm3EdgeDetector":
+        return cls(profile=profile, feature_ablation=feature_ablation)
+
+    def feature_ablation_label(self) -> str:
+        return self._ablation_label
+
+    def active_features(self) -> tuple[str, ...]:
+        return self._ablation_kept_features
 
     def phase(self) -> str:
         return self._phase
@@ -784,7 +871,10 @@ class Hmm3EdgeDetector:
             floor = float(self._norm_floor.get(key, 1.0))
             vec.append((value - center) / max(scale, floor))
         u_idx = self.feature_order.index("rms_state") if "rms_state" in self.feature_order else 0
-        return vec, vec[u_idx]
+        frame_u = vec[u_idx]
+        if self._ablation_active:
+            vec = [value if keep else 0.0 for value, keep in zip(vec, self._ablation_mask)]
+        return vec, frame_u
 
     def _emission(self, vec: list[float]) -> tuple[list[float], list[float]]:
         scores: list[float] = []
@@ -1367,9 +1457,13 @@ class ThresholdEdgeDetector:
         return out
 
 
-def make_detector(mode: str, profile: CalibrationProfile | None) -> EdgeDetector:
+def make_detector(
+    mode: str,
+    profile: CalibrationProfile | None,
+    feature_ablation: str | None = None,
+) -> EdgeDetector:
     if mode == "threshold":
         return ThresholdEdgeDetector.from_calibration(profile)
     if mode == "hmm3":
-        return Hmm3EdgeDetector.from_profile(profile)
+        return Hmm3EdgeDetector.from_profile(profile, feature_ablation=feature_ablation)
     return AdaptiveEdgeDetector.from_profile(profile)

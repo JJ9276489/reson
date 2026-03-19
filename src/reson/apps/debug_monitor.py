@@ -100,6 +100,7 @@ class DebugWindow(QWidget):
         window_sec: float,
         lock_handle: PortLockHandle,
         detector_mode: str,
+        feature_ablation: str,
         log_path: Path | None,
     ):
         super().__init__()
@@ -116,8 +117,13 @@ class DebugWindow(QWidget):
             profile = load_profile()
         except FileNotFoundError:
             profile = None
-        self.detector = make_detector(detector_mode, profile)
+        self.detector = make_detector(detector_mode, profile, feature_ablation=feature_ablation)
         self.detector_mode = detector_mode
+        self.feature_ablation = (
+            self.detector.feature_ablation_label()
+            if isinstance(self.detector, Hmm3EdgeDetector)
+            else "n/a"
+        )
 
         self.t_data: deque[float] = deque(maxlen=self.max_samples)
         self.raw_data: deque[int] = deque(maxlen=self.max_samples)
@@ -383,6 +389,7 @@ class DebugWindow(QWidget):
                 )
             self.stats.setText(
                 f"Port: {self.worker.reader.port} | detector={self.detector_mode} | state: {self.connection_state} "
+                f"| ablation={self.feature_ablation} "
                 f"| lines/s: {rate:.1f} | parsed/tick: {parsed_this_tick} | parse errors: {self.parse_errors} "
                 f"| samples: {self.sample_count}{dbg_tail}"
             )
@@ -414,6 +421,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baud", type=int, default=230400)
     parser.add_argument("--window-sec", type=float, default=10.0)
     parser.add_argument("--detector", choices=("hmm3", "adaptive", "threshold"), default="hmm3")
+    parser.add_argument(
+        "--feature-ablation",
+        default="all",
+        help=(
+            "hmm3 emission feature subset. Presets: all, wl-only, rms-only. "
+            "Custom: comma list (e.g. rms_state,waveform_length)."
+        ),
+    )
     parser.add_argument("--log-file", default=None, help="Optional CSV log path for replay/tuning.")
     return parser
 
@@ -437,7 +452,7 @@ def main() -> None:
 
     print(
         f"[reson-debug] python={sys.version.split()[0]} pyside6={PySide6.__version__} "
-        f"port={resolved_port} baud={args.baud}",
+        f"port={resolved_port} baud={args.baud} detector={args.detector} ablation={args.feature_ablation}",
         file=sys.stderr,
     )
 
@@ -455,6 +470,7 @@ def main() -> None:
         window_sec=args.window_sec,
         lock_handle=lock_handle,
         detector_mode=args.detector,
+        feature_ablation=args.feature_ablation,
         log_path=log_path,
     )
     win.resize(1100, 900)
