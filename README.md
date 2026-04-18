@@ -1,10 +1,12 @@
 # reson
 
-EMG-driven Morse input pipeline for ESP32 + AD8232 streams.
+EMG-driven binary switch service for ESP32 + AD8232 streams.
 
-## Pipeline
+Reson is the biosignal switch layer for click/no-click control. The runtime goal is simple:
 
-`serial -> parser -> detector -> timing -> morse -> UI`
+`serial -> parser -> detector -> switch down/up events`
+
+The public control boundary is binary. Detector internals may still expose richer states for debugging, but consumers should only depend on switch `down/up`.
 
 ## ESP32 firmware
 
@@ -17,7 +19,7 @@ Firmware is versioned in this repo:
 Serial contract expected by Reson:
 - space-delimited integer rows: `t raw env`
 - `baud=230400`
-- `~250 Hz` stream
+- approximately `250 Hz` stream
 
 Firmware tooling install:
 
@@ -71,10 +73,25 @@ Supported Python: 3.11 / 3.12.
 Unsupported: 3.14.
 
 Terminal-first guidance:
-- On macOS, launch `reson-debug` and `reson-gui` from the native Terminal app.
+- On macOS, launch Qt tools like `reson-debug` from the native Terminal app.
 - VS Code integrated terminal is best-effort for Qt apps.
 
-## Run
+## Runtime
+
+Binary switch JSONL stream:
+
+```bash
+reson-switch --port /dev/cu.usbserial-XXXX --baud 230400
+```
+
+Example output:
+
+```json
+{"type":"switch","phase":"down","t_ms":12345,"duration_ms":0,"source_state":"active","host_time_s":1776400000.123}
+{"type":"switch","phase":"up","t_ms":12580,"duration_ms":235,"source_state":"active","host_time_s":1776400000.358}
+```
+
+This is the intended integration point for `/Users/jeraldyuan/dev/eye-cursor`: consume `down/up` events and let `eye-cursor` own click semantics.
 
 Debug monitor:
 
@@ -82,143 +99,89 @@ Debug monitor:
 reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --window-sec 10 --detector hmm3
 ```
 
-GUI app:
+Manual labeled recording:
 
 ```bash
-reson-gui --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3
+reson-record --port /dev/cu.usbserial-XXXX --baud 230400 --out sessions/test-001
 ```
 
-Feature ablation (hmm3 emissions only), useful for quick feature impact checks:
+Visual labeled recording with live plots:
 
 ```bash
-# waveform-length-only emission features
-reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation wl-only
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation wl-only --record-dir sessions/test-visual-001
+```
 
-# custom subset
-reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation rms_state,waveform_length
+While recording:
+- in `reson-record`, press `c` to mark and `q` to stop
+- in visual `reson-debug --record-dir`, press `Space`/`c` or click the button to mark, then close the window to stop
+
+Session output:
+- `meta.json`: setup metadata
+- `raw.csv`: host time, ESP32 `t_ms`, raw, env, original line
+- `features.csv`: frame-level features including `waveform_length`
+- `labels.jsonl`: manual click marks and session start/end events
+
+Feature ablation, useful for testing whether waveform length is enough:
+
+```bash
+reson-switch --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation wl-only
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --feature-ablation wl-only
 ```
 
 `--feature-ablation` options:
-- `all` (default, no ablation)
-- `wl-only`
+- `all`
+- `wl-only` (default for `reson-switch`)
 - `rms-only`
 - comma list of feature names (`rms_state,lf_energy_ratio,slope_burst,waveform_length`)
-
-Note: ablation masks emission model inputs only; segment `light/heavy` stats still use runtime `u` from normalized `rms_state`.
 
 `--port` is optional (auto-detect fallback).  
 Only one process may own a serial port at once; Reson enforces lockfiles under `.reson_locks/`.
 
 ## Detector modes
 
-- `hmm3` (default): v2.5.2 3-state decoder (`REST/PRESS/ARTIFACT`) + segment-level `light/heavy` at `UP`.
-- `adaptive`: v2.4 raw-first adaptive detector.
-- `threshold`: legacy threshold fallback.
+- `hmm3`: 3-state decoder (`REST/PRESS/ARTIFACT`) with logistic emissions + fixed-lag Viterbi.
+- `adaptive`: raw-first adaptive detector retained as a fallback.
 
-## v2.5.2 core algorithm (hmm3)
+Both modes are collapsed into binary switch events at the app/pipeline boundary:
+- detector `DOWN` -> switch `down`
+- detector `UP` -> switch `up`
+- rest/artifact/noise -> no switch event
 
-Signal path:
-- Decisions use `raw` only.
-- `env_in` is debug/log only.
-- `raw -> filtered_raw_hp -> framed features -> logistic emissions -> fixed-lag Viterbi`.
+`hmm3` still has internal compatibility fields from earlier experiments. They are not part of the product-level output.
 
-Frame settings:
-- Window `120 ms`, hop `30 ms`.
-- Timestamp-based framing from `t_ms` (not fixed sample count).
-
-Features (default):
-- `rms_state`
-- `lf_energy_ratio`
-- `slope_burst`
-- `waveform_length`
-
-Decode:
-- States: `REST`, `PRESS`, `ARTIFACT`.
-- Emissions: multiclass logistic regression.
-- HMM: fixed-lag Viterbi (`lag_frames=4`).
-- Transition blend: `A_final = 0.8 * A_prior + 0.2 * A_estimated`.
-
-Safety/event layer:
-- `DOWN` on confirmed `REST->PRESS` (dwell-gated).
-- `UP` on confirmed `PRESS->REST` (release dwell-gated).
-- Keeps `min_event_ms`, `refractory_ms`, `min_rest_gap_ms`, blip policy.
-- If `ARTIFACT` occurs mid-press: cancel active segment, emit no `UP`, require REST re-arm.
-
-Segment-level light/heavy (at `UP` only):
-- Segment stats: `duration_ms`, `peak_u`, `auc_u`, `mean_u`.
-- Heavy if any 2 of 4 thresholds pass; else light.
-
-Runtime adaptation:
-- Normalization drift updates are allowed only when:
-  - decoded state is `REST`
-  - no pending transition
-  - rest-confidence frame minimum is met
-  - artifact gate is off
-- Drift is bounded by per-feature caps (`drift_cap_per_min`).
-
-Startup phases:
-- `BOOTSTRAP` -> `ARMING` -> `RUNNING`
-- No Morse lifecycle events before `RUNNING`.
-
-## Calibration / profile
+## Data collection / profile
 
 Profile file: `.reson_profile.json`
 
-Calibration is optional for runtime startup, but recommended for quality.  
-Profile contains v2.5.2 keys:
-- `model_version`
-- `detector_mode`
-- `feature_config`
-- `feature_hash`
-- `normalization`
-- `classifier`
-- `hmm`
-- `segment_thresholds`
-- `decision_gates`
-- `metadata`
-
-Runtime hard-fails if profile `feature_hash` does not match runtime feature ordering.
-
-Guided calibration command:
-
-```bash
-reson-calibrate-hmm3 --port /dev/cu.usbserial-XXXX --baud 230400
-```
-
-Default staged flow:
-- REST 20s
-- PRESS_LIGHT 10s
-- PRESS_HEAVY 10s
-- ARTIFACT 20s
+The current priority is collecting reusable binary click data with `reson-record` or `reson-debug --record-dir`. Profiles remain supported for `hmm3`, but new model fitting should be built from recorded sessions rather than one-shot live calibration.
 
 ## Debug monitor telemetry
 
 `reson-debug` panes:
 1. raw + filtered
-2. feature traces
-3. emission probabilities (`p_rest`, `p_press`, `p_artifact`)
-4. decoded state with DOWN/UP markers
+2. waveform length + RMS features
+3. binary active/rest state with DOWN/UP markers
 
-Optional replay log:
+Optional log:
 
 ```bash
 reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --detector hmm3 --log-file debug_log.csv
 ```
 
-Locked CSV order:
+CSV order:
 `t_ms,raw,env_in,filtered_raw_hp,rms_state,lf_energy_ratio,slope_burst,waveform_length,p_rest,p_press,p_artifact,decoded_state,phase,armed,artifact_gated,down,up,press_class,segment_duration_ms,segment_peak_u,segment_auc,segment_mean_u,segment_class`
 
 ## Safe shutdown / recovery
 
 - Prefer normal app close (`Ctrl+C` or window close) before unplugging ESP32.
-- On unplug/replug, app remains alive and auto-retries serial reconnect.
+- On unplug/replug, apps remain alive and auto-retry serial reconnect.
 - To inspect stream directly:
   - `pyserial-miniterm /dev/cu.usbserial-XXXX 230400 --raw`
 
 Recovery checklist:
 1. `ls /dev/cu.usbserial* /dev/tty.usbserial* 2>/dev/null`
 2. Ensure a single owner:
-   `pkill -f "pyserial-miniterm|reson-debug|reson-gui"`
+   `pkill -f "pyserial-miniterm|reson-debug|reson-switch"`
 3. Launch one app on one port.
 
 ## Tests

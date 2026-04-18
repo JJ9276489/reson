@@ -1,4 +1,0 @@
-[console_scripts]
-reson-calibrate-hmm3 = reson.apps.calibrate_hmm3:main
-reson-debug = reson.apps.debug_monitor:main
-reson-gui = reson.apps.gui_app:main

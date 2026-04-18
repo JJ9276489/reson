@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reson"
 version = "0.1.0"
-description = "EMG-driven Morse input pipeline from ESP32"
+description = "EMG-driven binary switch pipeline from ESP32"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -21,8 +21,8 @@ dev = [
 
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"
-reson-gui = "reson.apps.gui_app:main"
-reson-calibrate-hmm3 = "reson.apps.calibrate_hmm3:main"
+reson-record = "reson.apps.record_app:main"
+reson-switch = "reson.apps.switch_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

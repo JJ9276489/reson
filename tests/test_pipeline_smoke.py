@@ -1,30 +1,54 @@
-from reson.calibration import default_profile
-from reson.edge_detector import make_detector
-from reson.morse_engine import MorseComposer
-from reson.types import EmgSample
+from reson.pipeline import run_switch_pipeline
+from reson.types import EdgeEvent
 
 
-def test_smoke_e2e_to_symbol_and_letter():
-    detector = make_detector("adaptive", default_profile())
-    composer = MorseComposer()
+class _FakeReader:
+    def iter_lines(self):
+        yield "0 1000 0\n"
+        yield "10 1010 0\n"
 
-    stream = [
-        EmgSample(0, 1000, 5),
-        EmgSample(50, 1000, 5),
-        EmgSample(100, 1000, 5),
-        EmgSample(170, 1900, 30),
-        EmgSample(240, 1900, 30),
-        EmgSample(330, 1900, 30),
-        EmgSample(440, 1000, 5),
-        EmgSample(560, 1000, 5),
-        EmgSample(920, 1000, 5),
-    ]
 
-    final_text = ""
-    for sample in stream:
-        detector.update(sample)
-        for event in detector.pop_events():
-            update = composer.update(event)
-            final_text = update.typed_text
+class _FakeDetector:
+    def __init__(self):
+        self._events: list[EdgeEvent] = []
 
-    assert final_text in ("", "E")
+    def update(self, sample):
+        if sample.t_ms == 0:
+            self._events.append(
+                EdgeEvent(
+                    state="light",
+                    start_ms=sample.t_ms,
+                    end_ms=sample.t_ms,
+                    duration_ms=0,
+                    phase="down",
+                    press_class="light",
+                )
+            )
+        else:
+            self._events.append(
+                EdgeEvent(
+                    state="light",
+                    start_ms=0,
+                    end_ms=sample.t_ms,
+                    duration_ms=sample.t_ms,
+                    phase="up",
+                    press_class="light",
+                )
+            )
+        return "light"
+
+    def pop_events(self):
+        out = self._events
+        self._events = []
+        return out
+
+    def flush(self, final_t_ms):
+        return []
+
+
+def test_switch_pipeline_emits_binary_down_up_events():
+    events = list(run_switch_pipeline(_FakeReader(), _FakeDetector()))
+
+    assert [event.phase for event in events] == ["down", "up"]
+    assert events[0].t_ms == 0
+    assert events[1].duration_ms == 10

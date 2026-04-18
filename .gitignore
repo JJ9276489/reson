@@ -2,6 +2,8 @@
 __pycache__/
 .pytest_cache/
 build/
+*.egg-info/
+sessions/
 *.pyc
 .reson_profile.json
 .DS_Store
