@@ -1,37 +1,25 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import select
 import signal
 import sys
 import termios
 import time
 import tty
-from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 
 from reson.features import FeatureFrameExtractor
 from reson.parser import parse_line
 from reson.port_lock import PortLockInUseError, acquire_port_lock
+from reson.recording import (
+    BASE_FEATURE_RECORD_FIELDS,
+    RecordingSession,
+    build_session_meta,
+    default_session_dir,
+)
 from reson.serial_io import SerialConfig, SerialReader, resolve_port
-
-
-RAW_FIELDS = ["host_time_s", "t_ms", "raw", "env", "line"]
-FEATURE_FIELDS = [
-    "host_time_s",
-    "t_ms",
-    "window_start_ms",
-    "window_end_ms",
-    "env_in",
-    "filtered_raw_hp",
-    "rms_state",
-    "lf_energy_ratio",
-    "slope_burst",
-    "waveform_length",
-]
 
 
 class TerminalKeyReader:
@@ -65,16 +53,6 @@ class TerminalKeyReader:
         return self.stream.read(1)
 
 
-def default_session_dir(root: Path) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return root / stamp
-
-
-def _write_jsonl(handle, payload: dict[str, object]) -> None:
-    handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    handle.flush()
-
-
 def _build_extractor() -> FeatureFrameExtractor:
     return FeatureFrameExtractor()
 
@@ -98,7 +76,6 @@ def main() -> None:
     args = build_parser().parse_args()
     resolved_port = resolve_port(args.port)
     session_dir = Path(args.out) if args.out else default_session_dir(Path(args.sessions_root))
-    session_dir.mkdir(parents=True, exist_ok=False)
 
     running = True
 
@@ -125,147 +102,132 @@ def main() -> None:
     active_label = False
 
     try:
-        meta = {
-            "schema_version": 1,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
-            "port": resolved_port,
-            "baud": args.baud,
-            "serial_contract": "t raw env",
-            "label_schema": "interval_v1",
-            "label_mode": "toggle",
-            "label_key": args.label_key,
-            "quit_key": args.quit_key,
-            "label": args.label,
-            "notes": args.notes,
-            "files": {
-                "raw": "raw.csv",
-                "features": "features.csv",
-                "labels": "labels.jsonl",
-            },
-        }
-        (session_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        meta = build_session_meta(
+            port=resolved_port,
+            baud=args.baud,
+            label_mode="toggle",
+            label=args.label,
+            source="reson-record",
+            label_key=args.label_key,
+            quit_key=args.quit_key,
+            notes=args.notes,
+        )
 
         extractor = _build_extractor()
         reader = SerialReader(SerialConfig(port=resolved_port, baud=args.baud, timeout_s=0.1))
         retry_delay = reader.config.reconnect_initial_s
         next_status = time.monotonic() + 1.0
 
-        with (
-            (session_dir / "raw.csv").open("w", encoding="utf-8", newline="") as raw_handle,
-            (session_dir / "features.csv").open("w", encoding="utf-8", newline="") as feature_handle,
-            (session_dir / "labels.jsonl").open("w", encoding="utf-8") as label_handle,
-            TerminalKeyReader(sys.stdin) as keys,
-        ):
-            raw_writer = csv.DictWriter(raw_handle, fieldnames=RAW_FIELDS)
-            feature_writer = csv.DictWriter(feature_handle, fieldnames=FEATURE_FIELDS)
-            raw_writer.writeheader()
-            feature_writer.writeheader()
-            _write_jsonl(
-                label_handle,
-                {
-                    "type": "session_start",
-                    "host_time_s": started_host_s,
-                    "t_ms": None,
-                },
-            )
-
-            print(
-                f"[reson-record] writing {session_dir.resolve()} label='{args.label}' "
-                f"press '{args.label_key}' to start/end interval, '{args.quit_key}' to stop",
-                file=sys.stderr,
-                flush=True,
-            )
-
-            while running:
-                if args.duration_sec is not None and (time.time() - started_host_s) >= args.duration_sec:
-                    break
-
-                key = keys.read_key()
-                if key == args.quit_key:
-                    break
-                if key == args.label_key:
-                    active_label = not active_label
-                    event_type = "label_start" if active_label else "label_end"
-                    if event_type == "label_end":
-                        label_count += 1
-                    _write_jsonl(
-                        label_handle,
-                        {
-                            "type": event_type,
-                            "label": args.label,
-                            "host_time_s": time.time(),
-                            "t_ms": last_sample_t_ms,
-                        },
-                    )
-                    action = "start" if active_label else "end"
-                    print(
-                        f"[reson-record] {action} interval {label_count + int(active_label)} "
-                        f"t_ms={last_sample_t_ms}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-
-                if not reader.is_connected():
-                    if reader.reconnect():
-                        retry_delay = reader.config.reconnect_initial_s
-                        continue
-                    time.sleep(retry_delay)
-                    retry_delay = reader.next_reconnect_delay(retry_delay)
-                    continue
-
-                line = reader.read_line()
-                if line is None:
-                    continue
-                host_time_s = time.time()
-                sample = parse_line(line)
-                if sample is None:
-                    parse_errors += 1
-                    continue
-
-                last_sample_t_ms = sample.t_ms
-                sample_count += 1
-                raw_writer.writerow(
+        recording = RecordingSession.create(
+            session_dir,
+            meta=meta,
+            feature_fields=BASE_FEATURE_RECORD_FIELDS,
+        )
+        try:
+            with TerminalKeyReader(sys.stdin) as keys:
+                recording.write_label(
                     {
-                        "host_time_s": f"{host_time_s:.6f}",
-                        "t_ms": sample.t_ms,
-                        "raw": sample.raw,
-                        "env": sample.env,
-                        "line": line.strip(),
-                    }
+                        "type": "session_start",
+                        "host_time_s": started_host_s,
+                        "t_ms": None,
+                    },
                 )
 
-                _, frames = extractor.update(sample)
-                for frame in frames:
-                    frame_count += 1
-                    feature_writer.writerow(
+                print(
+                    f"[reson-record] writing {session_dir.resolve()} label='{args.label}' "
+                    f"press '{args.label_key}' to start/end interval, '{args.quit_key}' to stop",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+                while running:
+                    if args.duration_sec is not None and (time.time() - started_host_s) >= args.duration_sec:
+                        break
+
+                    key = keys.read_key()
+                    if key == args.quit_key:
+                        break
+                    if key == args.label_key:
+                        active_label = not active_label
+                        event_type = "label_start" if active_label else "label_end"
+                        if event_type == "label_end":
+                            label_count += 1
+                        recording.write_label(
+                            {
+                                "type": event_type,
+                                "label": args.label,
+                                "host_time_s": time.time(),
+                                "t_ms": last_sample_t_ms,
+                            },
+                        )
+                        action = "start" if active_label else "end"
+                        print(
+                            f"[reson-record] {action} interval {label_count + int(active_label)} "
+                            f"t_ms={last_sample_t_ms}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+
+                    if not reader.is_connected():
+                        if reader.reconnect():
+                            retry_delay = reader.config.reconnect_initial_s
+                            continue
+                        time.sleep(retry_delay)
+                        retry_delay = reader.next_reconnect_delay(retry_delay)
+                        continue
+
+                    line = reader.read_line()
+                    if line is None:
+                        continue
+                    host_time_s = time.time()
+                    sample = parse_line(line)
+                    if sample is None:
+                        parse_errors += 1
+                        continue
+
+                    last_sample_t_ms = sample.t_ms
+                    sample_count += 1
+                    recording.raw_writer.writerow(
                         {
                             "host_time_s": f"{host_time_s:.6f}",
-                            "t_ms": frame.t_ms,
-                            "window_start_ms": frame.window_start_ms,
-                            "window_end_ms": frame.window_end_ms,
-                            "env_in": frame.env_in,
-                            "filtered_raw_hp": frame.filtered_raw_hp,
-                            "rms_state": frame.rms_state,
-                            "lf_energy_ratio": frame.lf_energy_ratio,
-                            "slope_burst": frame.slope_burst,
-                            "waveform_length": frame.waveform_length,
+                            "t_ms": sample.t_ms,
+                            "raw": sample.raw,
+                            "env": sample.env,
+                            "line": line.strip(),
                         }
                     )
 
-                if args.status and time.monotonic() >= next_status:
-                    print(
-                        f"[reson-record] samples={sample_count} frames={frame_count} "
-                        f"intervals={label_count} active_label={int(active_label)} parse_errors={parse_errors}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    next_status = time.monotonic() + 1.0
+                    _, frames = extractor.update(sample)
+                    for frame in frames:
+                        frame_count += 1
+                        recording.feature_writer.writerow(
+                            {
+                                "host_time_s": f"{host_time_s:.6f}",
+                                "t_ms": frame.t_ms,
+                                "window_start_ms": frame.window_start_ms,
+                                "window_end_ms": frame.window_end_ms,
+                                "env_in": frame.env_in,
+                                "filtered_raw_hp": frame.filtered_raw_hp,
+                                "rms_state": frame.rms_state,
+                                "lf_energy_ratio": frame.lf_energy_ratio,
+                                "slope_burst": frame.slope_burst,
+                                "waveform_length": frame.waveform_length,
+                            }
+                        )
+
+                    if args.status and time.monotonic() >= next_status:
+                        print(
+                            f"[reson-record] samples={sample_count} frames={frame_count} "
+                            f"intervals={label_count} active_label={int(active_label)} parse_errors={parse_errors}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        next_status = time.monotonic() + 1.0
 
             if active_label:
                 active_label = False
                 label_count += 1
-                _write_jsonl(
-                    label_handle,
+                recording.write_label(
                     {
                         "type": "label_end",
                         "label": args.label,
@@ -275,8 +237,7 @@ def main() -> None:
                     },
                 )
 
-            _write_jsonl(
-                label_handle,
+            recording.write_label(
                 {
                     "type": "session_end",
                     "host_time_s": time.time(),
@@ -287,6 +248,8 @@ def main() -> None:
                     "parse_errors": parse_errors,
                 },
             )
+        finally:
+            recording.close()
     finally:
         if reader is not None:
             reader.close()

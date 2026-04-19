@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import signal
 import sys
 import time
 from collections import deque
-from datetime import datetime, timezone
 from pathlib import Path
 
 from reson.binary_model import BinaryModelDetector, load_binary_profile
 from reson.features import FeatureFrameExtractor, FeatureSnapshot
 from reson.port_lock import PortLockHandle, PortLockInUseError, acquire_port_lock
 from reson.qt_runtime import configure_qt_platform_plugin_path, get_qt_plugin_dir, validate_python_runtime
+from reson.recording import (
+    DEBUG_FEATURE_RECORD_FIELDS,
+    RAW_RECORD_FIELDS as RECORD_RAW_FIELDS,
+    RecordingSession,
+    build_session_meta,
+)
 from reson.serial_io import SerialConfig, SerialReader, resolve_port
 
 validate_python_runtime()
@@ -82,23 +86,8 @@ class DebugWindow(QWidget):
         "down",
         "up",
     ]
-    RAW_RECORD_FIELDS = ["host_time_s", "t_ms", "raw", "env", "line"]
-    FEATURE_RECORD_FIELDS = [
-        "host_time_s",
-        "t_ms",
-        "window_start_ms",
-        "window_end_ms",
-        "env_in",
-        "filtered_raw_hp",
-        "rms_state",
-        "lf_energy_ratio",
-        "slope_burst",
-        "waveform_length",
-        "active",
-        "probability",
-        "down",
-        "up",
-    ]
+    RAW_RECORD_FIELDS = RECORD_RAW_FIELDS
+    FEATURE_RECORD_FIELDS = DEBUG_FEATURE_RECORD_FIELDS
 
     def __init__(
         self,
@@ -126,11 +115,7 @@ class DebugWindow(QWidget):
         self.log_file = None
         self.log_writer: csv.DictWriter | None = None
         self.record_dir = record_dir
-        self.raw_record_file = None
-        self.feature_record_file = None
-        self.label_record_file = None
-        self.raw_record_writer: csv.DictWriter | None = None
-        self.feature_record_writer: csv.DictWriter | None = None
+        self.recording: RecordingSession | None = None
         self.record_started_host_s = time.time()
         self.record_sample_count = 0
         self.record_feature_count = 0
@@ -208,36 +193,26 @@ class DebugWindow(QWidget):
         self.timer.start(33)
 
     def _open_recording(self, *, resolved_dir: Path, port: str, baud: int) -> None:
-        resolved_dir.mkdir(parents=True, exist_ok=False)
-        meta = {
-            "schema_version": 1,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
-            "port": port,
-            "baud": baud,
-            "serial_contract": "t raw env",
-            "label_schema": "interval_v1",
-            "label_mode": "hold",
-            "label": "CLICK",
-            "label_keys": ["space", "c"],
-            "source": "reson-debug",
-            "files": {"raw": "raw.csv", "features": "features.csv", "labels": "labels.jsonl"},
-        }
-        (resolved_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        self.raw_record_file = (resolved_dir / "raw.csv").open("w", encoding="utf-8", newline="")
-        self.feature_record_file = (resolved_dir / "features.csv").open("w", encoding="utf-8", newline="")
-        self.label_record_file = (resolved_dir / "labels.jsonl").open("w", encoding="utf-8")
-        self.raw_record_writer = csv.DictWriter(self.raw_record_file, fieldnames=self.RAW_RECORD_FIELDS)
-        self.feature_record_writer = csv.DictWriter(self.feature_record_file, fieldnames=self.FEATURE_RECORD_FIELDS)
-        self.raw_record_writer.writeheader()
-        self.feature_record_writer.writeheader()
+        meta = build_session_meta(
+            port=port,
+            baud=baud,
+            label_mode="hold",
+            label="CLICK",
+            source="reson-debug",
+            label_keys=["space", "c"],
+        )
+        self.recording = RecordingSession.create(
+            resolved_dir,
+            meta=meta,
+            feature_fields=self.FEATURE_RECORD_FIELDS,
+        )
         self._write_label_record({"type": "session_start", "host_time_s": self.record_started_host_s, "t_ms": None})
         self.record_status.setText(f"Recording: {resolved_dir}")
 
     def _write_label_record(self, payload: dict[str, object]) -> None:
-        if self.label_record_file is None:
+        if self.recording is None:
             return
-        self.label_record_file.write(json.dumps(payload, separators=(",", ":")) + "\n")
-        self.label_record_file.flush()
+        self.recording.write_label(payload)
 
     def _current_record_t_ms(self) -> int | None:
         return self.last_t_ms
@@ -349,8 +324,8 @@ class DebugWindow(QWidget):
             down = int(any(event.phase == "down" for event in events))
             up = int(any(event.phase == "up" for event in events))
 
-        if self.raw_record_writer is not None:
-            self.raw_record_writer.writerow(
+        if self.recording is not None:
+            self.recording.raw_writer.writerow(
                 {
                     "host_time_s": f"{host_time_s:.6f}",
                     "t_ms": sample.t_ms,
@@ -400,8 +375,8 @@ class DebugWindow(QWidget):
                     waveform_length=frame.waveform_length,
                 )
                 self._append_row(row)
-                if self.feature_record_writer is not None:
-                    self.feature_record_writer.writerow(
+                if self.recording is not None:
+                    self.recording.feature_writer.writerow(
                         {key: row[key] for key in self.FEATURE_RECORD_FIELDS}
                     )
                     self.record_feature_count += 1
@@ -482,7 +457,7 @@ class DebugWindow(QWidget):
             self.worker.wait(1500)
         if self.log_file is not None:
             self.log_file.close()
-        if self.label_record_file is not None:
+        if self.recording is not None:
             if self.record_label_active:
                 self._end_click_label(closed_by="window_close")
             self._write_label_record(
@@ -496,11 +471,8 @@ class DebugWindow(QWidget):
                     "parse_errors": self.parse_errors,
                 }
             )
-            self.label_record_file.close()
-        if self.raw_record_file is not None:
-            self.raw_record_file.close()
-        if self.feature_record_file is not None:
-            self.feature_record_file.close()
+            self.recording.close()
+            self.recording = None
         self.lock_handle.release()
         event.accept()
 

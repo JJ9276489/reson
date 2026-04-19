@@ -10,6 +10,11 @@ serial -> parser -> feature frames -> trained binary model -> switch down/up eve
 
 The intended downstream consumer is `/Users/jeraldyuan/dev/eye-cursor`.
 
+Review references:
+
+- Architecture map: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Session/model schemas: [`docs/data_schema.md`](docs/data_schema.md)
+
 ## Install
 
 ```bash
