@@ -5,12 +5,11 @@ from reson.types import EdgeEvent
 def test_press_down_edge_becomes_switch_down():
     switch_event = edge_event_to_switch_event(
         EdgeEvent(
-            state="light",
+            state="active",
             start_ms=100,
             end_ms=100,
             duration_ms=0,
             phase="down",
-            press_class="light",
         )
     )
 
@@ -23,12 +22,11 @@ def test_press_down_edge_becomes_switch_down():
 def test_press_up_edge_becomes_switch_up_with_duration():
     switch_event = edge_event_to_switch_event(
         EdgeEvent(
-            state="heavy",
+            state="active",
             start_ms=100,
             end_ms=240,
             duration_ms=140,
             phase="up",
-            press_class="heavy",
         )
     )
 
@@ -42,7 +40,7 @@ def test_press_up_edge_becomes_switch_up_with_duration():
 def test_rest_and_legacy_segment_edges_do_not_emit_switch_events():
     events = [
         EdgeEvent(state="rest", start_ms=0, end_ms=100, duration_ms=100),
-        EdgeEvent(state="light", start_ms=100, end_ms=200, duration_ms=100),
+        EdgeEvent(state="active", start_ms=100, end_ms=200, duration_ms=100),
     ]
 
     assert edge_events_to_switch_events(events) == []

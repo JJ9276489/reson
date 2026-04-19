@@ -4,6 +4,8 @@ __pycache__/
 build/
 *.egg-info/
 sessions/
+models/
+studies/
 *.pyc
 .reson_profile.json
 .DS_Store

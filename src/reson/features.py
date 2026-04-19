@@ -323,7 +323,7 @@ def compute_feature_hash(feature_order: Sequence[str]) -> str:
 
 
 class FeatureFrameExtractor:
-    """Timestamp-based sliding window feature extraction for hmm3 mode."""
+    """Timestamp-based sliding window feature extraction for binary models."""
 
     def __init__(
         self,

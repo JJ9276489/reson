@@ -16,26 +16,24 @@ class _FakeDetector:
         if sample.t_ms == 0:
             self._events.append(
                 EdgeEvent(
-                    state="light",
+                    state="active",
                     start_ms=sample.t_ms,
                     end_ms=sample.t_ms,
                     duration_ms=0,
                     phase="down",
-                    press_class="light",
                 )
             )
         else:
             self._events.append(
                 EdgeEvent(
-                    state="light",
+                    state="active",
                     start_ms=0,
                     end_ms=sample.t_ms,
                     duration_ms=sample.t_ms,
                     phase="up",
-                    press_class="light",
                 )
             )
-        return "light"
+        return "active"
 
     def pop_events(self):
         out = self._events

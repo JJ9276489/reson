@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 
-from reson.calibration import default_profile, load_profile
 from reson.features import FeatureFrameExtractor
 from reson.parser import parse_line
 from reson.port_lock import PortLockInUseError, acquire_port_lock
@@ -76,37 +75,17 @@ def _write_jsonl(handle, payload: dict[str, object]) -> None:
     handle.flush()
 
 
-def _build_extractor(profile_path: Path) -> FeatureFrameExtractor:
-    try:
-        profile = load_profile(profile_path)
-    except FileNotFoundError:
-        profile = default_profile()
-
-    feature_cfg = dict(profile.feature_config)
-    return FeatureFrameExtractor(
-        window_ms=int(feature_cfg.get("window_ms", 120)),
-        hop_ms=int(feature_cfg.get("hop_ms", 30)),
-        tau_baseline_ms=profile.tau_baseline_ms,
-        filter_enabled=profile.filter_enabled,
-        hp_hz=profile.hp_hz,
-        lp_hz=profile.lp_hz,
-        notch_hz=profile.notch_hz,
-        notch_q=profile.notch_q,
-        rest_scale_floor=profile.rest_scale_floor,
-        artifact_lf_hz=profile.artifact_lf_hz,
-        slope_fast_tau_ms=profile.slope_fast_tau_ms,
-        slope_slow_tau_ms=profile.slope_slow_tau_ms,
-    )
+def _build_extractor() -> FeatureFrameExtractor:
+    return FeatureFrameExtractor()
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Record raw Reson sessions with manual click labels")
+    parser = argparse.ArgumentParser(description="Record raw Reson sessions with interval click labels")
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", type=int, default=230400)
     parser.add_argument("--out", default=None, help="Session output directory. Default: sessions/YYYYMMDD-HHMMSS")
     parser.add_argument("--sessions-root", default="sessions")
-    parser.add_argument("--profile", default=".reson_profile.json")
-    parser.add_argument("--label-key", default="c", help="Key that records a manual click mark")
+    parser.add_argument("--label-key", default="c", help="Key that toggles a click interval start/end")
     parser.add_argument("--quit-key", default="q", help="Key that stops recording")
     parser.add_argument("--label", default="CLICK", help="Label written when label-key is pressed")
     parser.add_argument("--duration-sec", type=float, default=None)
@@ -143,6 +122,7 @@ def main() -> None:
     frame_count = 0
     label_count = 0
     parse_errors = 0
+    active_label = False
 
     try:
         meta = {
@@ -151,6 +131,8 @@ def main() -> None:
             "port": resolved_port,
             "baud": args.baud,
             "serial_contract": "t raw env",
+            "label_schema": "interval_v1",
+            "label_mode": "toggle",
             "label_key": args.label_key,
             "quit_key": args.quit_key,
             "label": args.label,
@@ -163,7 +145,7 @@ def main() -> None:
         }
         (session_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-        extractor = _build_extractor(Path(args.profile))
+        extractor = _build_extractor()
         reader = SerialReader(SerialConfig(port=resolved_port, baud=args.baud, timeout_s=0.1))
         retry_delay = reader.config.reconnect_initial_s
         next_status = time.monotonic() + 1.0
@@ -189,7 +171,7 @@ def main() -> None:
 
             print(
                 f"[reson-record] writing {session_dir.resolve()} label='{args.label}' "
-                f"press '{args.label_key}' to mark, '{args.quit_key}' to stop",
+                f"press '{args.label_key}' to start/end interval, '{args.quit_key}' to stop",
                 file=sys.stderr,
                 flush=True,
             )
@@ -202,17 +184,26 @@ def main() -> None:
                 if key == args.quit_key:
                     break
                 if key == args.label_key:
-                    label_count += 1
+                    active_label = not active_label
+                    event_type = "label_start" if active_label else "label_end"
+                    if event_type == "label_end":
+                        label_count += 1
                     _write_jsonl(
                         label_handle,
                         {
-                            "type": "manual_mark",
+                            "type": event_type,
                             "label": args.label,
                             "host_time_s": time.time(),
                             "t_ms": last_sample_t_ms,
                         },
                     )
-                    print(f"[reson-record] mark {label_count} t_ms={last_sample_t_ms}", file=sys.stderr, flush=True)
+                    action = "start" if active_label else "end"
+                    print(
+                        f"[reson-record] {action} interval {label_count + int(active_label)} "
+                        f"t_ms={last_sample_t_ms}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
                 if not reader.is_connected():
                     if reader.reconnect():
@@ -264,11 +255,25 @@ def main() -> None:
                 if args.status and time.monotonic() >= next_status:
                     print(
                         f"[reson-record] samples={sample_count} frames={frame_count} "
-                        f"labels={label_count} parse_errors={parse_errors}",
+                        f"intervals={label_count} active_label={int(active_label)} parse_errors={parse_errors}",
                         file=sys.stderr,
                         flush=True,
                     )
                     next_status = time.monotonic() + 1.0
+
+            if active_label:
+                active_label = False
+                label_count += 1
+                _write_jsonl(
+                    label_handle,
+                    {
+                        "type": "label_end",
+                        "label": args.label,
+                        "host_time_s": time.time(),
+                        "t_ms": last_sample_t_ms,
+                        "closed_by": "session_end",
+                    },
+                )
 
             _write_jsonl(
                 label_handle,
@@ -289,7 +294,7 @@ def main() -> None:
 
     print(
         f"[reson-record] complete samples={sample_count} frames={frame_count} "
-        f"labels={label_count} parse_errors={parse_errors}",
+        f"intervals={label_count} parse_errors={parse_errors}",
         file=sys.stderr,
         flush=True,
     )

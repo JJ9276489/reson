@@ -11,7 +11,7 @@ class EmgSample:
     env: int
 
 
-EdgeState = Literal["rest", "light", "heavy"]
+EdgeState = Literal["rest", "active"]
 SwitchPhase = Literal["down", "up"]
 
 
@@ -22,7 +22,6 @@ class EdgeEvent:
     end_ms: int
     duration_ms: int
     phase: str | None = None
-    press_class: EdgeState | None = None
 
 
 @dataclass(frozen=True)

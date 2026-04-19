@@ -18,11 +18,16 @@ dependencies = [
 dev = [
   "pytest>=8.0",
 ]
+ml = [
+  "torch>=2.2",
+]
 
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"
 reson-record = "reson.apps.record_app:main"
 reson-switch = "reson.apps.switch_app:main"
+reson-train = "reson.apps.train_app:main"
+reson-study = "reson.apps.study_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
