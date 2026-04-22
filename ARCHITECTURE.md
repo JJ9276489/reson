@@ -1,6 +1,6 @@
 # Reson Architecture
 
-Reson is currently a binary switch pipeline. It reads `t raw env` samples from an ESP32, extracts timestamp-based features, applies a trained binary model, and emits switch `down` / `up` events for downstream consumers such as `/Users/jeraldyuan/dev/eye-cursor`.
+Reson is currently a binary switch pipeline. It reads `t raw env` samples from ESP32 firmware, extracts timestamp-based features, applies a trained binary model, and emits switch `down` / `up` events for downstream HMI software.
 
 ## Product Boundary
 
@@ -12,7 +12,7 @@ ESP32 serial stream
   -> emit switch events
 ```
 
-Reson does not own pointer control, eye tracking, UI automation, or click injection. Those belong in the downstream consumer.
+Reson does not own pointer control, eye tracking, UI automation, or click injection. Those belong in downstream software.
 
 ## Runtime Flow
 
@@ -77,7 +77,7 @@ Reson currently supports:
 | `tcn` | `.[ml]` | Optional sequence model |
 | `transformer` | `.[ml]` | Optional sequence model |
 
-The current research hypothesis is that waveform length may carry most of the useful single-channel signal. The scaling-study path exists to test that against larger sequence models rather than assume it.
+Simple baselines are first-class, not placeholders. With limited single-channel biosignal data, a simple waveform-length threshold can be more informative than a larger model. The sequence models exist to support scaling studies once there is enough data to justify them.
 
 ## Event Contract
 

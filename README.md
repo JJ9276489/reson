@@ -1,68 +1,59 @@
 # reson
 
-EMG-driven binary switch pipeline for ESP32 + AD8232 streams.
+Reson is an early-stage EMG binary switch prototype.
 
-Reson's product boundary is intentionally simple:
+It is not a full HMI stack. Its current product boundary is deliberately narrow:
 
 ```text
 serial -> parser -> feature frames -> trained binary model -> switch down/up events
 ```
 
-The intended downstream consumer is `/Users/jeraldyuan/dev/eye-cursor`.
+The intended downstream use is a click layer for an HMI system such as an eye-cursor controller. Reson only tries to answer one question right now: can this hardware and labeling path produce a reliable binary intent signal?
 
-Review references:
+## Current Status
 
-- Architecture map: [`ARCHITECTURE.md`](ARCHITECTURE.md)
-- Session/model schemas: [`docs/data_schema.md`](docs/data_schema.md)
+Reson is technically functional but not validated as a robust control interface.
 
-## Install
+Implemented:
 
-```bash
-cd /Users/jeraldyuan/dev/reson
-/opt/homebrew/bin/python3.11 -m venv .venv
-source .venv/bin/activate
-python -m ensurepip --upgrade
-python -m pip install -U pip setuptools wheel
-python -m pip install '.[dev]'
-```
+- ESP32 serial firmware that streams `t raw env` rows.
+- Python serial ingestion with reconnect behavior and per-port lockfiles.
+- Timestamp-based feature extraction from raw ADC samples.
+- Interval-labeled data collection through `reson-debug` and `reson-record`.
+- Binary model training for threshold, logistic regression, and optional PyTorch sequence models.
+- Runtime switch output as JSONL `down` / `up` events.
 
-Supported Python: 3.11 / 3.12. Unsupported: 3.14.
+Tested in repo:
 
-For CNN/TCN/Transformer training:
+- Parser behavior.
+- Serial reconnect behavior using test doubles.
+- Port-lock behavior.
+- Recording schema helpers.
+- Binary model profile loading and switch event lifecycle.
+- Training loaders and simple model fitting on synthetic fixture data.
 
-```bash
-python -m pip install -e '.[dev,ml]'
-```
+Current evidence:
 
-## Firmware
+- The signal path can run end to end on the current ESP32 + AD8232 prototype.
+- Waveform length has appeared visually useful in early local recordings.
+- Preliminary local training can produce baseline models from interval-labeled sessions.
 
-Firmware is versioned in this repo:
+Not yet validated:
 
-- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream/esp32_emg_stream.ino`
-- `/Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp/`
-- `/Users/jeraldyuan/dev/reson/firmware/README.md`
-
-Serial contract:
-
-```text
-t raw env
-```
-
-Defaults:
-
-- baud: `230400`
-- stream rate: approximately `250 Hz`
-- raw: ESP32 ADC reading
-- env: firmware-side debug envelope
-
-Firmware helper commands:
-
-```bash
-make firmware-upload
-make firmware-monitor
-```
+- Session-to-session generalization.
+- Day-to-day electrode-placement robustness.
+- Robustness against head motion, cable motion, talking, swallowing, and electrode disturbance.
+- Performance as an actual click layer for a downstream HMI under realistic use.
+- Whether the current AD8232-based hardware is sufficient for reliable EMG switching.
 
 ## Hardware
+
+Current prototype:
+
+- ESP32 development board.
+- AD8232 ECG front-end board used experimentally for jaw EMG.
+- Analog output wired to ESP32 `GPIO34`.
+- USB serial connection to the host computer.
 
 Prototype photo:
 
@@ -79,12 +70,103 @@ Current wiring:
 Notes:
 
 - `LO+` / `LO-` are not used by current firmware.
-- Current prototype uses ECG-grade AD8232 hardware for jaw EMG experimentation.
+- AD8232 is ECG-grade hardware, not an ideal EMG front end.
 - This is a non-medical prototype and is not intended for diagnosis or treatment.
+- Current hardware should be treated as an evidence-generating prototype, not as final instrumentation.
+
+## Serial Contract
+
+Firmware emits one whitespace-delimited row per sample:
+
+```text
+t raw env
+```
+
+Fields:
+
+- `t`: ESP32 timestamp in milliseconds.
+- `raw`: ESP32 ADC reading.
+- `env`: firmware-side debug envelope.
+
+The Python model path uses raw-derived features. `env` is retained for debugging and comparison, not as the source of truth for current model decisions.
+
+Defaults:
+
+- Baud: `230400`
+- Target sample rate: approximately `250 Hz`
+
+## Signal And Control Path
+
+At runtime:
+
+1. `SerialReader` reads firmware lines.
+2. `parse_line` converts valid rows into `EmgSample` records.
+3. `FeatureFrameExtractor` builds timestamp-based frames from raw samples.
+4. `BinaryModelDetector` converts feature frames into active/rest state.
+5. Edge events are converted into switch JSONL events.
+
+Core source files:
+
+| Layer | File |
+| --- | --- |
+| Serial IO | `src/reson/serial_io.py` |
+| Parser | `src/reson/parser.py` |
+| Feature extraction | `src/reson/features.py` |
+| Binary model runtime | `src/reson/binary_model.py` |
+| Switch event conversion | `src/reson/switch.py` |
+| Training | `src/reson/training.py` |
+
+## Install
+
+From the repository root:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m ensurepip --upgrade
+python -m pip install -U pip setuptools wheel
+python -m pip install '.[dev]'
+```
+
+Supported Python: 3.11 / 3.12. Unsupported: 3.14. If `python3.11` is not on PATH, install Python 3.11/3.12 and use the full path to that interpreter when creating `.venv`.
+
+For optional CNN/TCN/Transformer training:
+
+```bash
+python -m pip install -e '.[dev,ml]'
+```
+
+The optional sequence models are exploratory. They are not expected to outperform simple baselines without substantially more labeled data.
+
+## Firmware
+
+Firmware is versioned in this repo:
+
+- Arduino sketch: `firmware/esp32_emg_stream/esp32_emg_stream.ino`
+- PlatformIO C++ firmware: `firmware/esp32_emg_stream_cpp/`
+- Firmware notes: `firmware/README.md`
+
+Recommended PlatformIO path from repo root:
+
+```bash
+python -m pip install -r requirements-firmware.txt
+make firmware-upload
+make firmware-monitor
+```
+
+Direct serial check:
+
+```bash
+pyserial-miniterm /dev/cu.usbserial-XXXX 230400 --raw
+```
+
+If no data appears, press the ESP32 reset button once. Exit miniterm with `Ctrl+]`.
 
 ## Collect Data
 
-Visual interval recording is the preferred path:
+Data collection is the main current bottleneck. Use interval labels, not point labels.
+
+Preferred visual recording path:
 
 ```bash
 reson-debug \
@@ -95,11 +177,11 @@ reson-debug \
 
 During recording:
 
-- hold `Space` or `c` during the intended click/clench
-- release when the click/clench ends
-- close the window to stop
+- Hold `Space` or `c` during the intended click/clench interval.
+- Release when the intended click/clench ends.
+- Close the window to stop.
 
-Terminal-only fallback:
+Terminal fallback:
 
 ```bash
 reson-record \
@@ -111,84 +193,45 @@ reson-record \
 
 Terminal mode uses toggle intervals:
 
-- press `c` once for `label_start`
-- press `c` again for `label_end`
-- press `q` to stop
+- Press `c` once for `label_start`.
+- Press `c` again for `label_end`.
+- Press `q` to stop.
 
-Session files:
+Each session writes:
 
-- `meta.json`: setup metadata
-- `raw.csv`: host time, ESP32 `t_ms`, raw, env, original line
-- `features.csv`: frame-level model features
-- `labels.jsonl`: interval labels and session boundaries
+- `meta.json`: setup metadata.
+- `raw.csv`: host time, ESP32 timestamp, raw ADC, debug env, original line.
+- `features.csv`: frame-level features.
+- `labels.jsonl`: interval labels and session boundaries.
 
-Label events:
+See `docs/data_collection_protocol.md` and `docs/data_schema.md` before collecting data for comparison experiments.
 
-```json
-{"type":"label_start","label":"CLICK","t_ms":123000}
-{"type":"label_end","label":"CLICK","t_ms":123340}
+## Train Baseline Models
+
+Start with simple baselines. They are included because they are interpretable and often hard to beat with limited single-channel biosignal data.
+
+Waveform-length threshold baseline:
+
+```bash
+reson-train \
+  --sessions sessions \
+  --model threshold \
+  --features wl \
+  --out models/wl_threshold.json
 ```
 
-## Train Models
-
-Train a waveform-length logistic model:
+Waveform-length logistic regression:
 
 ```bash
 reson-train \
   --sessions sessions \
   --model logreg \
   --features wl \
-  --out models/binary_profile.json
-```
-
-Train all currently supported model families:
-
-```bash
-reson-train \
-  --sessions sessions \
-  --model all \
-  --features all \
   --epochs 100 \
-  --hidden 16 \
-  --out models/run-001 \
-  --allow-skip-optional
+  --out models/wl_logreg.json
 ```
 
-Model families:
-
-- `threshold`: single-feature binary threshold baseline
-- `logreg`: pure-Python logistic regression over frame features
-- `cnn`: optional PyTorch 1D CNN over sliding feature windows
-- `tcn`: optional PyTorch temporal convolution model
-- `transformer`: optional PyTorch tiny transformer over sliding feature windows
-
-Feature presets:
-
-- `wl`: waveform length only
-- `core`: waveform length + RMS
-- `all`: waveform length + RMS + slope burst + low-frequency ratio
-
-## Run Switch Output
-
-Run a trained binary model:
-
-```bash
-reson-switch \
-  --port /dev/cu.usbserial-XXXX \
-  --baud 230400 \
-  --profile models/binary_profile.json
-```
-
-Output is JSONL:
-
-```json
-{"type":"switch","phase":"down","t_ms":12345,"duration_ms":0,"source_state":"active","host_time_s":1776400000.123}
-{"type":"switch","phase":"up","t_ms":12580,"duration_ms":235,"source_state":"active","host_time_s":1776400000.358}
-```
-
-## Scaling Studies
-
-Run a baseline scaling sweep:
+Exploratory model sweep:
 
 ```bash
 reson-study \
@@ -198,26 +241,79 @@ reson-study \
   --fractions 0.25,0.5,1.0 \
   --epochs 20,100 \
   --hidden 8,16 \
-  --out studies/binary_scaling.csv
+  --out studies/binary_scaling.csv \
+  --allow-skip-optional
 ```
 
-Use this to compare:
+Interpretation rule: if waveform-length threshold or logistic regression wins, that is useful evidence. It means the current data/hardware may not justify larger models yet.
 
-- data volume
-- feature set
-- model family
-- epochs
-- parameter count
+## Run Switch Output
 
-If a simple waveform-length threshold wins, that is useful signal: the hardware/data are not yet asking for a larger sequence model.
-
-## Direct Serial Check
+Run a trained binary profile:
 
 ```bash
-pyserial-miniterm /dev/cu.usbserial-XXXX 230400 --raw
+reson-switch \
+  --port /dev/cu.usbserial-XXXX \
+  --baud 230400 \
+  --profile models/wl_threshold.json \
+  --status
 ```
 
-Exit miniterm with `Ctrl+]`.
+Output is JSONL:
+
+```json
+{"type":"switch","phase":"down","t_ms":12345,"duration_ms":0,"source_state":"active","host_time_s":1776400000.123}
+{"type":"switch","phase":"up","t_ms":12580,"duration_ms":235,"source_state":"active","host_time_s":1776400000.358}
+```
+
+Downstream consumers should depend on this switch-event schema, not on model internals.
+
+## What Good Performance Would Mean
+
+The current goal is not high benchmark accuracy on a single recording. The useful target is reliable binary control under realistic nuisance conditions.
+
+Minimum useful metrics:
+
+- False `down` events per minute during rest and artifact-only periods.
+- Missed intended clicks per minute during guided click sessions.
+- Down latency from intended clench onset.
+- Up latency after intended release.
+- Performance on held-out sessions, not only random frames from the same recording.
+- Stability after unplug/replug and app restart.
+
+Stronger claims should wait until there are multiple sessions across placements, days, and artifact conditions.
+
+## Known Limits
+
+- Current hardware is not an EMG-specific front end.
+- Current data volume is small and not packaged as a public benchmark.
+- Motion artifacts may overlap with intentional jaw activation.
+- Electrode placement and cable motion are likely major confounds.
+- The debug monitor is practical but still broad: it combines plotting, recording, and optional model overlay.
+- Optional neural models are available for experiments, not as evidence of maturity.
+
+## Next Evidence-Generating Step
+
+Collect a small but disciplined dataset before adding more model complexity:
+
+- At least 5-10 sessions.
+- Multiple electrode placements or reattachments.
+- Rest-only segments.
+- Intentional click/clench intervals.
+- Artifact-only segments: head movement, cable tug, jaw shift without click, talking/swallowing if relevant.
+- Held-out sessions reserved for evaluation.
+
+Then compare waveform-length threshold, waveform-length logistic regression, and sequence models using `reson-study`.
+
+## Reviewer References
+
+- Architecture: `ARCHITECTURE.md`
+- Data schema: `docs/data_schema.md`
+- Data collection protocol: `docs/data_collection_protocol.md`
+- Validation status: `docs/validation_status.md`
+- Reviewer guide: `docs/reviewer_guide.md`
+- Demo plan: `docs/demo_plan.md`
+- Firmware: `firmware/README.md`
 
 ## Safe Shutdown / Recovery
 

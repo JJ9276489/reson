@@ -2,17 +2,17 @@
 
 This is the modular C++ version of the Reson ESP32 stream firmware.
 
-## Why this exists
+## Why This Exists
 
-- Keeps serial protocol stable while preparing for IMU integration.
+- Keeps the serial protocol stable while preparing for IMU integration.
 - Uses module boundaries (`main.cpp`, `emg_streamer.cpp/.h`) instead of a monolithic `.ino`.
-- Is reproducible and CI-friendly with PlatformIO.
+- Is more reproducible than a local Arduino IDE-only workflow.
 
-## Output contract
+## Output Contract
 
-- Baud: `230400`
-- Sample target: `~250 Hz`
-- Line format: `t raw env` (space-delimited integers)
+- Baud: `230400`.
+- Sample target: approximately `250 Hz`.
+- Line format: `t raw env` as space-delimited integers.
 
 Example:
 
@@ -20,13 +20,21 @@ Example:
 12345 2089 37
 ```
 
-## Build / upload
+## Build / Upload
+
+From this directory:
 
 ```bash
-cd /Users/jeraldyuan/dev/reson/firmware/esp32_emg_stream_cpp
 pio run
 pio run -t upload
 pio device monitor -b 230400
+```
+
+From repo root:
+
+```bash
+make firmware-upload
+make firmware-monitor
 ```
 
 If your board needs explicit port selection:
@@ -38,6 +46,6 @@ pio device monitor -b 230400 --port /dev/cu.usbserial-XXXX
 
 ## Notes
 
-- The legacy Arduino sketch remains at:
-  - `firmware/esp32_emg_stream/esp32_emg_stream.ino`
-- Both paths currently preserve the same serial protocol expected by Python parser.
+- The legacy Arduino sketch remains at `firmware/esp32_emg_stream/esp32_emg_stream.ino`.
+- Both firmware paths currently preserve the same serial protocol expected by the Python parser.
+- If the protocol changes, update parser, tests, and docs in the same change.
