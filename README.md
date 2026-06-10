@@ -20,6 +20,7 @@ Implemented:
 - Python serial ingestion with reconnect behavior and per-port lockfiles.
 - Timestamp-based feature extraction from raw ADC samples.
 - Interval-labeled data collection through `reson-debug` and `reson-record`.
+- Prompted interval data collection through `reson-debug --prompt` or `reson-prompt-record`, avoiding keyboard labels during signal windows.
 - Binary model training for threshold, logistic regression, and optional PyTorch sequence models.
 - Runtime switch output as JSONL `down` / `up` events.
 
@@ -166,7 +167,37 @@ If no data appears, press the ESP32 reset button once. Exit miniterm with `Ctrl+
 
 Data collection is the main current bottleneck. Use interval labels, not point labels.
 
-Preferred visual recording path:
+Preferred visual prompted recording path:
+
+```bash
+reson-debug \
+  --port /dev/cu.usbserial-XXXX \
+  --baud 230400 \
+  --record-dir sessions/prompt-gui-001 \
+  --prompt \
+  --prompt-trials 20 \
+  --prompt-press-sec 1.0 \
+  --prompt-gap-sec 3.0 \
+  --prompt-no-bell
+```
+
+The debug monitor shows raw/features while generating `label_start` / `label_end` events automatically from a timed protocol. Start the command, then keep hands off the laptop during the protocol and follow the large GUI phase prompt.
+
+Terminal prompted fallback:
+
+```bash
+reson-prompt-record \
+  --port /dev/cu.usbserial-XXXX \
+  --baud 230400 \
+  --out sessions/prompt-001 \
+  --trials 20 \
+  --press-sec 1.0 \
+  --gap-sec 3.0 \
+  --status \
+  --no-bell
+```
+
+Manual visual recording fallback:
 
 ```bash
 reson-debug \
@@ -180,6 +211,7 @@ During recording:
 - Hold `Space` or `c` during the intended click/clench interval.
 - Release when the intended click/clench ends.
 - Close the window to stop.
+- Do not use this mode for training data if keyboard/trackpad interaction couples into the ADC signal.
 
 Terminal fallback:
 
@@ -202,7 +234,7 @@ Each session writes:
 - `meta.json`: setup metadata.
 - `raw.csv`: host time, ESP32 timestamp, raw ADC, debug env, original line.
 - `features.csv`: frame-level features.
-- `labels.jsonl`: interval labels and session boundaries.
+- `labels.jsonl`: interval labels, prompt phases, and session boundaries.
 
 See `docs/data_collection_protocol.md` and `docs/data_schema.md` before collecting data for comparison experiments.
 

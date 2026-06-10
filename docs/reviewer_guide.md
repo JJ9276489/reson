@@ -36,7 +36,8 @@ It is not a complete HMI system. It does not own eye tracking, pointer movement,
 
 | Command | Purpose | File |
 | --- | --- | --- |
-| `reson-debug` | Qt signal/features monitor and visual interval recorder | `src/reson/apps/debug_monitor.py` |
+| `reson-debug` | Qt signal/features monitor, visual prompted recorder, and manual interval recorder | `src/reson/apps/debug_monitor.py` |
+| `reson-prompt-record` | Terminal timed prompt recorder with automatic interval labels | `src/reson/apps/prompt_record_app.py` |
 | `reson-record` | Terminal interval recorder | `src/reson/apps/record_app.py` |
 | `reson-train` | Train a binary model profile | `src/reson/apps/train_app.py` |
 | `reson-study` | Run model/feature/data scaling sweeps | `src/reson/apps/study_app.py` |
@@ -62,10 +63,10 @@ Expected firmware row:
 12345 2089 37
 ```
 
-Record data:
+Record visual prompted data:
 
 ```bash
-reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --record-dir sessions/review-001
+reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --record-dir sessions/review-001 --prompt --prompt-trials 10 --prompt-no-bell
 ```
 
 Train a simple baseline:

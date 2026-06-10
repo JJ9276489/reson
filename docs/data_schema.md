@@ -1,6 +1,6 @@
 # Reson Data Schema
 
-This document describes the files written by `reson-debug --record-dir ...` and `reson-record --out ...`, plus the trained binary profile consumed by `reson-switch`.
+This document describes the files written by `reson-debug --record-dir ...`, `reson-debug --prompt --record-dir ...`, `reson-prompt-record --out ...`, and `reson-record --out ...`, plus the trained binary profile consumed by `reson-switch`.
 
 ## Session Directory
 
@@ -30,9 +30,9 @@ Required fields:
 | `baud` | integer | Serial baud rate |
 | `serial_contract` | string | Expected firmware line format, currently `t raw env` |
 | `label_schema` | string | Current value: `interval_v1` |
-| `label_mode` | string | `hold` for debug monitor, `toggle` for terminal recorder |
+| `label_mode` | string | `prompted`, `hold`, or `toggle` |
 | `label` | string | Current click label, usually `CLICK` |
-| `source` | string | Recording app, for example `reson-debug` or `reson-record` |
+| `source` | string | Recording app, for example `reson-debug-prompt`, `reson-prompt-record`, `reson-debug`, or `reson-record` |
 | `files` | object | Relative file names for raw, features, and labels |
 
 Optional fields:
@@ -43,6 +43,7 @@ Optional fields:
 | `label_key` | string | Toggle-mode label key |
 | `quit_key` | string | Toggle-mode quit key |
 | `notes` | string | User notes from terminal recording |
+| `prompt_protocol` | object | Timed phase configuration for prompted sessions |
 
 ## `raw.csv`
 
@@ -101,6 +102,12 @@ Click interval:
 ```json
 {"type":"label_start","label":"CLICK","host_time_s":1776400001.2,"t_ms":123000}
 {"type":"label_end","label":"CLICK","host_time_s":1776400001.5,"t_ms":123340}
+```
+
+Prompt phase marker:
+
+```json
+{"type":"prompt_phase","phase":"CLICK 4/20","host_time_s":1776400001.2,"t_ms":123000,"duration_s":1.0,"label":"CLICK"}
 ```
 
 Session end:

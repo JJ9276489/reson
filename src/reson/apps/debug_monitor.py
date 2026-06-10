@@ -11,6 +11,7 @@ from pathlib import Path
 from reson.binary_model import BinaryModelDetector, load_binary_profile
 from reson.features import FeatureFrameExtractor, FeatureSnapshot
 from reson.port_lock import PortLockHandle, PortLockInUseError, acquire_port_lock
+from reson.prompt_protocol import PhasePosition, PromptPhase, build_protocol, phase_at, protocol_as_dicts, protocol_duration_s
 from reson.qt_runtime import configure_qt_platform_plugin_path, get_qt_plugin_dir, validate_python_runtime
 from reson.recording import (
     DEBUG_FEATURE_RECORD_FIELDS,
@@ -98,6 +99,9 @@ class DebugWindow(QWidget):
         profile_path: Path | None,
         log_path: Path | None,
         record_dir: Path | None,
+        prompt_phases: list[PromptPhase] | None = None,
+        prompt_config: dict[str, object] | None = None,
+        prompt_bell: bool = True,
     ):
         super().__init__()
         self.setWindowTitle("Reson Debug Monitor")
@@ -121,6 +125,14 @@ class DebugWindow(QWidget):
         self.record_feature_count = 0
         self.record_label_count = 0
         self.record_label_active = False
+        self.prompt_phases = prompt_phases
+        self.prompt_config = prompt_config or {}
+        self.prompt_bell = prompt_bell
+        self.prompt_started_mono: float | None = None
+        self.prompt_current_idx: int | None = None
+        self.prompt_position: PhasePosition | None = None
+        self.prompt_active_label: str | None = None
+        self.prompt_done = False
 
         self.t_data: deque[float] = deque(maxlen=self.max_samples)
         self.raw_data: deque[int] = deque(maxlen=self.max_samples)
@@ -144,9 +156,16 @@ class DebugWindow(QWidget):
 
         layout = QVBoxLayout(self)
         self.stats = QLabel("Initializing...")
+        self.prompt_status = QLabel("Prompt: off")
+        self.prompt_status.setVisible(self.prompt_phases is not None)
+        self.prompt_status.setStyleSheet("font-size: 22px; font-weight: 700; padding: 8px; background: #222; color: #ddd;")
         self.record_status = QLabel("Recording: off")
         self.mark_btn = QPushButton("Hold Click Label (Space/C)")
-        self.mark_btn.setEnabled(self.record_dir is not None)
+        if self.prompt_phases is not None:
+            self.mark_btn.setText("Prompt mode: automatic labels")
+            self.mark_btn.setEnabled(False)
+        else:
+            self.mark_btn.setEnabled(self.record_dir is not None)
         self.mark_btn.pressed.connect(self._start_click_label)
         self.mark_btn.released.connect(self._end_click_label)
 
@@ -169,6 +188,7 @@ class DebugWindow(QWidget):
         self.up_curve = self.state_plot.plot(pen=None, symbol="o", symbolBrush="b")
 
         layout.addWidget(self.stats)
+        layout.addWidget(self.prompt_status)
         layout.addLayout(controls)
         layout.addWidget(self.raw_plot)
         layout.addWidget(self.feature_plot)
@@ -196,11 +216,17 @@ class DebugWindow(QWidget):
         meta = build_session_meta(
             port=port,
             baud=baud,
-            label_mode="hold",
+            label_mode="prompted" if self.prompt_phases is not None else "hold",
             label="CLICK",
-            source="reson-debug",
-            label_keys=["space", "c"],
+            source="reson-debug-prompt" if self.prompt_phases is not None else "reson-debug",
+            label_keys=None if self.prompt_phases is not None else ["space", "c"],
         )
+        if self.prompt_phases is not None:
+            meta["prompt_protocol"] = {
+                **self.prompt_config,
+                "phases": protocol_as_dicts(self.prompt_phases),
+                "duration_s": protocol_duration_s(self.prompt_phases),
+            }
         self.recording = RecordingSession.create(
             resolved_dir,
             meta=meta,
@@ -218,6 +244,8 @@ class DebugWindow(QWidget):
         return self.last_t_ms
 
     def _start_click_label(self) -> None:
+        if self.prompt_phases is not None:
+            return
         if self.record_dir is None or self.record_label_active:
             return
         self.record_label_active = True
@@ -227,6 +255,8 @@ class DebugWindow(QWidget):
         self.record_status.setText(f"Recording: {self.record_dir} | intervals={self.record_label_count} | ACTIVE LABEL")
 
     def _end_click_label(self, *, closed_by: str | None = None) -> None:
+        if self.prompt_phases is not None:
+            return
         if self.record_dir is None or not self.record_label_active:
             return
         self.record_label_active = False
@@ -242,8 +272,107 @@ class DebugWindow(QWidget):
         self._write_label_record(payload)
         self.record_status.setText(f"Recording: {self.record_dir} | intervals={self.record_label_count}")
 
+    def _end_prompt_label(self, *, host_time_s: float, closed_by: str) -> None:
+        if self.prompt_active_label is None:
+            return
+        self._write_label_record(
+            {
+                "type": "label_end",
+                "label": self.prompt_active_label,
+                "host_time_s": host_time_s,
+                "t_ms": self._current_record_t_ms(),
+                "closed_by": closed_by,
+            }
+        )
+        self.record_label_count += 1
+        self.record_label_active = False
+        self.prompt_active_label = None
+
+    def _set_prompt_banner(self) -> None:
+        if self.prompt_phases is None:
+            return
+        if self.prompt_started_mono is None:
+            self.prompt_status.setText("Prompt: waiting for first serial sample")
+            self.prompt_status.setStyleSheet(
+                "font-size: 22px; font-weight: 700; padding: 8px; background: #333; color: #ddd;"
+            )
+            return
+        if self.prompt_done:
+            self.prompt_status.setText("Prompt: complete. Close the window to finish the recording.")
+            self.prompt_status.setStyleSheet(
+                "font-size: 22px; font-weight: 700; padding: 8px; background: #1e3a2f; color: #d8ffe8;"
+            )
+            return
+        if self.prompt_position is None:
+            return
+        phase = self.prompt_position.phase
+        remaining = self.prompt_position.remaining_in_phase_s
+        prefix = f"Prompt {self.prompt_position.index + 1}/{len(self.prompt_phases)}"
+        self.prompt_status.setText(f"{prefix}: {phase.name} | remaining {remaining:.1f}s")
+        if phase.label == "CLICK":
+            style = "background: #5a1f1f; color: #ffe8e8;"
+        elif phase.name.startswith("ARTIFACT"):
+            style = "background: #4f3d16; color: #fff3c4;"
+        else:
+            style = "background: #1d3557; color: #e7f0ff;"
+        self.prompt_status.setStyleSheet(f"font-size: 22px; font-weight: 700; padding: 8px; {style}")
+
+    def _advance_prompt(self, *, host_time_s: float) -> None:
+        if self.prompt_phases is None or self.recording is None:
+            return
+        if self.prompt_started_mono is None:
+            self.prompt_started_mono = time.monotonic()
+
+        elapsed_s = time.monotonic() - self.prompt_started_mono
+        position = phase_at(self.prompt_phases, elapsed_s)
+        if position is None:
+            if not self.prompt_done:
+                self._end_prompt_label(host_time_s=host_time_s, closed_by="prompt_complete")
+                self._write_label_record(
+                    {"type": "prompt_done", "host_time_s": host_time_s, "t_ms": self._current_record_t_ms()}
+                )
+                self.prompt_done = True
+                self.prompt_position = None
+                self._set_prompt_banner()
+            return
+
+        self.prompt_position = position
+        if self.prompt_current_idx == position.index:
+            return
+
+        self._end_prompt_label(host_time_s=host_time_s, closed_by="phase_transition")
+        self.prompt_current_idx = position.index
+        phase = position.phase
+        self._write_label_record(
+            {
+                "type": "prompt_phase",
+                "phase": phase.name,
+                "host_time_s": host_time_s,
+                "t_ms": self._current_record_t_ms(),
+                "duration_s": phase.duration_s,
+                "label": phase.label,
+            }
+        )
+        if phase.label is not None:
+            self.prompt_active_label = phase.label
+            self.record_label_active = True
+            self._write_label_record(
+                {
+                    "type": "label_start",
+                    "label": phase.label,
+                    "host_time_s": host_time_s,
+                    "t_ms": self._current_record_t_ms(),
+                }
+            )
+        if self.prompt_bell:
+            QApplication.beep()
+        self._set_prompt_banner()
+
     def keyPressEvent(self, event):  # noqa: N802
         if event.isAutoRepeat():
+            event.accept()
+            return
+        if self.prompt_phases is not None and (event.text().lower() == "c" or event.key() == Qt.Key_Space):
             event.accept()
             return
         if event.text().lower() == "c" or event.key() == Qt.Key_Space:
@@ -254,6 +383,9 @@ class DebugWindow(QWidget):
 
     def keyReleaseEvent(self, event):  # noqa: N802
         if event.isAutoRepeat():
+            event.accept()
+            return
+        if self.prompt_phases is not None and (event.text().lower() == "c" or event.key() == Qt.Key_Space):
             event.accept()
             return
         if event.text().lower() == "c" or event.key() == Qt.Key_Space:
@@ -335,6 +467,7 @@ class DebugWindow(QWidget):
                 }
             )
             self.record_sample_count += 1
+            self._advance_prompt(host_time_s=host_time_s)
 
         if not frames:
             row = self._row_from_frame(
@@ -441,15 +574,18 @@ class DebugWindow(QWidget):
                     f"Recording: {self.record_dir} | raw={self.record_sample_count} "
                     f"features={self.record_feature_count} intervals={self.record_label_count}{active_suffix}"
                 )
+            self._set_prompt_banner()
             return
 
         if self.line_count == 0:
             self.stats.setText(f"Port: {self.worker.reader.port} | state: {self.connection_state} | waiting for serial data...")
+            self._set_prompt_banner()
             return
         self.stats.setText(
             f"Port: {self.worker.reader.port} | state: {self.connection_state} | lines/s: {rate:.1f} "
             f"| no valid samples yet | parse errors: {self.parse_errors} | last bad line: {self.last_parse_error_line[:60]}"
         )
+        self._set_prompt_banner()
 
     def closeEvent(self, event):  # noqa: N802
         if self.worker.isRunning():
@@ -458,7 +594,9 @@ class DebugWindow(QWidget):
         if self.log_file is not None:
             self.log_file.close()
         if self.recording is not None:
-            if self.record_label_active:
+            if self.prompt_active_label is not None:
+                self._end_prompt_label(host_time_s=time.time(), closed_by="window_close")
+            elif self.record_label_active:
                 self._end_click_label(closed_by="window_close")
             self._write_label_record(
                 {
@@ -485,6 +623,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default=None, help="Optional trained binary profile for live active/rest overlay.")
     parser.add_argument("--log-file", default=None, help="Optional CSV log path for replay/tuning.")
     parser.add_argument("--record-dir", default=None, help="Optional visual recording session directory.")
+    parser.add_argument("--prompt", action="store_true", help="Run an automatic prompted interval protocol in the GUI.")
+    parser.add_argument("--prompt-settle-sec", type=float, default=5.0)
+    parser.add_argument("--prompt-rest-sec", type=float, default=20.0)
+    parser.add_argument("--prompt-trials", type=int, default=20)
+    parser.add_argument("--prompt-press-sec", type=float, default=1.0)
+    parser.add_argument("--prompt-gap-sec", type=float, default=3.0)
+    parser.add_argument("--prompt-final-rest-sec", type=float, default=10.0)
+    parser.add_argument("--prompt-artifact-sec", type=float, default=0.0)
+    parser.add_argument("--prompt-no-bell", action="store_true", help="Disable GUI beeps at prompt transitions.")
     return parser
 
 
@@ -494,6 +641,25 @@ def main() -> None:
     log_path = Path(args.log_file) if args.log_file else None
     record_dir = Path(args.record_dir) if args.record_dir else None
     profile_path = Path(args.profile) if args.profile else None
+    prompt_phases = None
+    prompt_config = None
+    if args.prompt:
+        if record_dir is None:
+            print("[reson-debug] --prompt requires --record-dir so labels can be saved", file=sys.stderr)
+            raise SystemExit(2)
+        prompt_config = {
+            "settle_sec": args.prompt_settle_sec,
+            "rest_sec": args.prompt_rest_sec,
+            "trials": args.prompt_trials,
+            "press_sec": args.prompt_press_sec,
+            "gap_sec": args.prompt_gap_sec,
+            "final_rest_sec": args.prompt_final_rest_sec,
+            "artifact_sec": args.prompt_artifact_sec,
+        }
+        prompt_phases = build_protocol(**prompt_config)
+        if not prompt_phases:
+            print("[reson-debug] empty prompt protocol", file=sys.stderr)
+            raise SystemExit(2)
 
     try:
         lock_handle = acquire_port_lock(resolved_port)
@@ -509,7 +675,7 @@ def main() -> None:
 
     print(
         f"[reson-debug] python={sys.version.split()[0]} pyside6={PySide6.__version__} "
-        f"port={resolved_port} baud={args.baud} profile={profile_path or 'none'}",
+        f"port={resolved_port} baud={args.baud} profile={profile_path or 'none'} prompt={bool(prompt_phases)}",
         file=sys.stderr,
     )
 
@@ -529,6 +695,9 @@ def main() -> None:
         profile_path=profile_path,
         log_path=log_path,
         record_dir=record_dir,
+        prompt_phases=prompt_phases,
+        prompt_config=prompt_config,
+        prompt_bell=not args.prompt_no_bell,
     )
     win.resize(1100, 900)
     win.show()

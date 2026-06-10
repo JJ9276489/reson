@@ -14,7 +14,7 @@ Reson is an early-stage biosignal switch prototype. The software path is impleme
 | Parser | Python parser accepts valid rows and rejects malformed rows |
 | Serial lifecycle | Runtime has reconnect behavior and per-port lockfiles |
 | Feature extraction | Timestamp-windowed raw-derived features are implemented |
-| Recording | Visual and terminal interval-label recorders write session directories |
+| Recording | Prompted, visual, and terminal interval-label recorders write session directories |
 | Training | Threshold, logistic regression, and optional torch sequence model training paths exist |
 | Runtime | `reson-switch` emits JSONL `down` / `up` switch events from a trained profile |
 | Tests | Unit/smoke tests cover parser, serial doubles, recording helpers, training fixtures, and switch events |

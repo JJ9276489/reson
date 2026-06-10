@@ -43,7 +43,8 @@ Key files:
 
 | Command | File | Purpose |
 | --- | --- | --- |
-| `reson-debug` | `src/reson/apps/debug_monitor.py` | Qt monitor, live feature plots, optional model overlay, visual interval recording |
+| `reson-debug` | `src/reson/apps/debug_monitor.py` | Qt monitor, live feature plots, optional model overlay, visual prompted/manual interval recording |
+| `reson-prompt-record` | `src/reson/apps/prompt_record_app.py` | Terminal timed prompt recorder with automatic interval labels |
 | `reson-record` | `src/reson/apps/record_app.py` | Terminal interval recorder |
 | `reson-train` | `src/reson/apps/train_app.py` | Train one model or all supported model families |
 | `reson-study` | `src/reson/apps/study_app.py` | Run feature/model/data-scale sweeps |

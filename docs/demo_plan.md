@@ -48,10 +48,10 @@ Before the demo:
    ```
 
 4. Show raw and feature response during rest, intentional click/clench, and mild artifact.
-5. Record a short interval-labeled session:
+5. Record a short visual prompted session:
 
    ```bash
-   reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --record-dir sessions/demo-001
+   reson-debug --port /dev/cu.usbserial-XXXX --baud 230400 --record-dir sessions/demo-001 --prompt --prompt-trials 10 --prompt-no-bell
    ```
 
 6. Inspect generated files:

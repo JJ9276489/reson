@@ -24,6 +24,7 @@ ml = [
 
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"
+reson-prompt-record = "reson.apps.prompt_record_app:main"
 reson-record = "reson.apps.record_app:main"
 reson-switch = "reson.apps.switch_app:main"
 reson-train = "reson.apps.train_app:main"

@@ -23,7 +23,43 @@ This protocol assumes the current AD8232 setup. If the analog front end changes,
 
 ## Recommended Command
 
-Use the visual debug monitor when possible:
+Use GUI prompted recording first. This avoids keyboard labels during the actual signal windows while still showing the raw/features trace.
+
+```bash
+reson-debug \
+  --port /dev/cu.usbserial-XXXX \
+  --baud 230400 \
+  --record-dir sessions/session-001 \
+  --prompt \
+  --prompt-trials 20 \
+  --prompt-press-sec 1.0 \
+  --prompt-gap-sec 3.0 \
+  --prompt-no-bell
+```
+
+Prompted labels are generated automatically:
+
+- `CLICK` phases write `label_start` at phase entry.
+- `CLICK` phases write `label_end` at phase exit.
+- Rest and artifact phases write `prompt_phase` records but no click labels.
+- The operator should not touch the keyboard or trackpad during the protocol.
+- The GUI prompt banner shows the current phase while the plots show whether the ADC/features are usable.
+
+If the GUI is unavailable, use terminal prompted recording:
+
+```bash
+reson-prompt-record \
+  --port /dev/cu.usbserial-XXXX \
+  --baud 230400 \
+  --out sessions/session-001 \
+  --trials 20 \
+  --press-sec 1.0 \
+  --gap-sec 3.0 \
+  --status \
+  --no-bell
+```
+
+Use manual visual recording only as a fallback:
 
 ```bash
 reson-debug \
@@ -37,6 +73,7 @@ Labeling in the debug monitor:
 - Hold `Space` or `c` only while intentionally performing the click/clench.
 - Release as soon as the intended click/clench ends.
 - Do not label head movement, cable movement, talking, swallowing, or jaw shifts unless the intent is to collect a separate artifact-labeled protocol later.
+- Do not use keyboard/trackpad labeling if laptop interaction visibly affects the ADC trace.
 
 Terminal fallback:
 
@@ -53,6 +90,8 @@ Terminal labels are toggled:
 - Press `c` to start a `CLICK` interval.
 - Press `c` again to end it.
 - Press `q` to stop recording.
+
+Terminal toggle labels are useful as a fallback, but they still require keyboard input during collection. Prefer GUI prompted recording when laptop interaction contaminates the signal.
 
 ## Good First Dataset Target
 
@@ -81,6 +120,13 @@ Correct:
 ```json
 {"type":"label_start","label":"CLICK","t_ms":123000}
 {"type":"label_end","label":"CLICK","t_ms":123280}
+```
+
+Prompted sessions also include phase records:
+
+```json
+{"type":"prompt_phase","phase":"CLICK 3/20","t_ms":123000,"duration_s":1.0,"label":"CLICK"}
+{"type":"prompt_phase","phase":"REST","t_ms":124000,"duration_s":3.0,"label":null}
 ```
 
 Avoid:
@@ -131,6 +177,7 @@ Expected signs of a usable session:
 | Many parse errors | Serial corruption or wrong firmware output format | Verify firmware still emits exactly `t raw env` |
 | Click labels do not match visible signal | Human label timing issue | Re-record slower, with deliberate holds |
 | Rest produces large feature spikes | Motion/electrode/cable artifact | Record artifact-only segments and consider hardware stabilization |
+| Signal rails when touching laptop | USB/body/trackpad/keyboard coupling | Use `reson-debug --prompt` or `reson-prompt-record`; avoid laptop input during collection; test power isolation later |
 
 ## Training After Collection
 
