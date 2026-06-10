@@ -3,6 +3,7 @@
 [![CI](https://github.com/jeraldhu-yuan/reson/actions/workflows/ci.yml/badge.svg)](https://github.com/jeraldhu-yuan/reson/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20631777.svg)](https://doi.org/10.5281/zenodo.20631777)
 
 Reson is an early-stage EMG binary switch prototype.
 

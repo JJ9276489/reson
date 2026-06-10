@@ -10,6 +10,11 @@ repository-code: "https://github.com/jeraldhu-yuan/reson"
 license: MIT
 version: 0.2.1
 date-released: 2026-06-10
+doi: 10.5281/zenodo.20631777
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.20631777
+    description: Concept DOI (resolves to the latest version)
 keywords:
   - EMG
   - electromyography

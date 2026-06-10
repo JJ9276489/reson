@@ -30,9 +30,8 @@ access or physical action and cannot be automated from the repo.
 
 - [x] GitHub account renamed `JJ9276489` → `jeraldhu-yuan` (2026-06-10).
       Still to do: fill in profile (display name, affiliation, photo).
-- [~] Zenodo: GitHub integration toggle enabled for this repo. Remaining:
-      cut a release so Zenodo archives it and mints a DOI, then add the DOI
-      badge to README and the `doi` field to CITATION.cff.
+- [x] Zenodo: linked, v0.2.1 archived, DOI 10.5281/zenodo.20631777 minted
+      (concept DOI). Badge added to README and `doi` added to CITATION.cff.
 - [ ] Dataset: package the validation sessions (raw.csv, features.csv,
       labels.jsonl, meta.json per session) and upload to Zenodo as a
       separate dataset deposit with its own DOI.
