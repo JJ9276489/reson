@@ -42,6 +42,8 @@ It is not a complete HMI system. It does not own eye tracking, pointer movement,
 | `reson-train` | Train a binary model profile | `src/reson/apps/train_app.py` |
 | `reson-study` | Run model/feature/data scaling sweeps | `src/reson/apps/study_app.py` |
 | `reson-switch` | Emit switch JSONL events from a trained profile | `src/reson/apps/switch_app.py` |
+| `reson-eval` | Leave-one-session-out event-level evaluation | `src/reson/apps/eval_app.py`, `src/reson/evaluation.py` |
+| `reson-clicker` | Demo click target driven by a trained model (live or replay) | `src/reson/apps/clicker_app.py`, `src/reson/clicker.py` |
 
 ## Minimal Sanity Path
 

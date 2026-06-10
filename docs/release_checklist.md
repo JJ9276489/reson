@@ -21,8 +21,9 @@ access or physical action and cannot be automated from the repo.
       with reattachment between some sessions, rest-only segments, and
       artifact-only segments (see `docs/validation_status.md`).
 - [ ] Reserve held-out sessions before any model comparison.
-- [ ] Run baseline comparison: WL threshold, WL logreg, all-feature
-      logreg; report event-level metrics.
+- [x] Baseline comparison tooling: `reson-eval` runs leave-one-session-out
+      WL-threshold / WL-logreg / all-feature-logreg and reports event-level
+      metrics. (Run it once the re-recorded + new sessions are in.)
 - [ ] Write results into `docs/validation_status.md` and the paper.
 
 ## Publication (manual — accounts)

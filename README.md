@@ -304,6 +304,41 @@ Output is JSONL:
 
 Downstream consumers should depend on this switch-event schema, not on model internals.
 
+## Evaluate (held-out, event-level)
+
+`reson-eval` scores models the way they are actually used: it replays each
+recorded session's raw samples through the runtime detector, collects the
+emitted `down`/`up` events, and compares them against the labeled click
+intervals and prompt-phase windows. Evaluation is leave-one-session-out, so
+every number is held-out performance.
+
+```bash
+reson-eval \
+  --sessions sessions \
+  --configs threshold:wl,logreg:wl,logreg:all \
+  --report studies/eval_summary.csv \
+  --per-session
+```
+
+It reports the metrics listed under "What Good Performance Would Mean":
+detection rate, missed clicks, false `down` events per minute during rest and
+during artifact-only windows, and down/up latency and event-duration error.
+Sessions whose directory name contains `bad` are skipped.
+
+## Demo Clicker
+
+`reson-clicker` is a small GUI target you can click with your muscle to feel a
+trained model out. Each completed press lights the target, beeps, and bumps a
+counter.
+
+```bash
+# Live, from the ESP32:
+reson-clicker --profile models/wl_threshold.json --port /dev/cu.usbserial-XXXX
+
+# Offline, replaying a recorded session (no hardware needed):
+reson-clicker --profile models/wl_threshold.json --replay sessions/prompt-gui-001
+```
+
 ## What Good Performance Would Mean
 
 The current goal is not high benchmark accuracy on a single recording. The useful target is reliable binary control under realistic nuisance conditions.

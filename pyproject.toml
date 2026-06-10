@@ -48,6 +48,8 @@ reson-record = "reson.apps.record_app:main"
 reson-switch = "reson.apps.switch_app:main"
 reson-train = "reson.apps.train_app:main"
 reson-study = "reson.apps.study_app:main"
+reson-eval = "reson.apps.eval_app:main"
+reson-clicker = "reson.apps.clicker_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
