@@ -15,6 +15,14 @@ serial -> parser -> feature frames -> trained binary model -> switch down/up eve
 
 The intended downstream use is a click layer for an HMI system such as an eye-cursor controller. Reson only tries to answer one question right now: can this hardware and labeling path produce a reliable binary intent signal?
 
+## Demo
+
+A jaw clench detected in real time and turned into a click (prototype, single setup):
+
+[![Reson demo: jaw-clench click switch](https://img.youtube.com/vi/78xajhyyDSc/hqdefault.jpg)](https://www.youtube.com/watch?v=78xajhyyDSc)
+
+▶ https://www.youtube.com/watch?v=78xajhyyDSc
+
 ## Current Status
 
 Reson is technically functional but not validated as a robust control interface.

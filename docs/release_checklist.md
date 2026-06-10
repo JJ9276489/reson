@@ -35,9 +35,9 @@ access or physical action and cannot be automated from the repo.
 - [ ] Dataset: package the validation sessions (raw.csv, features.csv,
       labels.jsonl, meta.json per session) and upload to Zenodo as a
       separate dataset deposit with its own DOI.
-- [ ] Demo video: follow `docs/demo_plan.md`; 1–2 minutes of a real
-      jaw-click driving a click event; upload (YouTube/Zenodo) and link
-      from README.
+- [x] Demo video recorded and linked from README:
+      https://www.youtube.com/watch?v=78xajhyyDSc
+      Optional next: also archive it to Zenodo for a citable video DOI.
 - [ ] JOSS: finish `paper/paper.md` TODOs after validation, then submit
       at https://joss.theoj.org (requirements: OSI license ✓, tests ✓,
       docs ✓, contribution guidelines ✓).

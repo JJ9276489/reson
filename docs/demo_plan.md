@@ -2,6 +2,8 @@
 
 This is an honest demo plan for the current maturity level. The goal is to show an early but disciplined signal/control loop, not to imply the system is robust or production-ready.
 
+> Recorded demo: https://www.youtube.com/watch?v=78xajhyyDSc — a jaw clench detected live and turned into a click via `reson-clicker`.
+
 ## Demo Goal
 
 Show that Reson can:
