@@ -1,6 +1,6 @@
 # reson
 
-[![CI](https://github.com/JJ9276489/reson/actions/workflows/ci.yml/badge.svg)](https://github.com/JJ9276489/reson/actions/workflows/ci.yml)
+[![CI](https://github.com/jeraldhu-yuan/reson/actions/workflows/ci.yml/badge.svg)](https://github.com/jeraldhu-yuan/reson/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 

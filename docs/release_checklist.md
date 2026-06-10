@@ -28,13 +28,11 @@ access or physical action and cannot be automated from the repo.
 
 ## Publication (manual — accounts)
 
-- [ ] GitHub account: rename `JJ9276489` to a real-name handle
-      (Settings → Account → Change username; redirects are automatic),
-      fill in profile (name, affiliation, photo).
-- [ ] Zenodo: log in with GitHub, flip the toggle for this repo at
-      https://zenodo.org/account/settings/github/, then cut the next
-      release — Zenodo archives it and mints a DOI automatically.
-      Add the DOI badge to README and the `doi` field to CITATION.cff.
+- [x] GitHub account renamed `JJ9276489` → `jeraldhu-yuan` (2026-06-10).
+      Still to do: fill in profile (display name, affiliation, photo).
+- [~] Zenodo: GitHub integration toggle enabled for this repo. Remaining:
+      cut a release so Zenodo archives it and mints a DOI, then add the DOI
+      badge to README and the `doi` field to CITATION.cff.
 - [ ] Dataset: package the validation sessions (raw.csv, features.csv,
       labels.jsonl, meta.json per session) and upload to Zenodo as a
       separate dataset deposit with its own DOI.

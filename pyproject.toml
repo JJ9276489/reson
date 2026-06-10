@@ -38,8 +38,8 @@ ml = [
 ]
 
 [project.urls]
-Repository = "https://github.com/JJ9276489/reson"
-Issues = "https://github.com/JJ9276489/reson/issues"
+Repository = "https://github.com/jeraldhu-yuan/reson"
+Issues = "https://github.com/jeraldhu-yuan/reson/issues"
 
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"
