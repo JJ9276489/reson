@@ -160,4 +160,9 @@ For torch sequence models, `model` contains `config`, `seq_len`, and a JSON-seri
 {"type":"switch","phase":"up","t_ms":12580,"duration_ms":235,"source_state":"active","host_time_s":1776400000.358}
 ```
 
+`phase` is one of `down`, `up`, or `cancel`. Every `down` is followed by exactly
+one terminal event: `up` when the press cleared `min_event_ms`, or `cancel` for a
+shorter transient (a `down`/`cancel` pair delivers no click). Consumers never see
+two consecutive `down` events or a `down` without a terminal.
+
 Downstream consumers should depend on this switch schema rather than training profile internals.

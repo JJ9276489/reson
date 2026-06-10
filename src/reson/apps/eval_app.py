@@ -6,7 +6,12 @@ import json
 import sys
 from pathlib import Path
 
-from reson.evaluation import SessionScore, evaluate_loso
+from reson.evaluation import (
+    SessionScore,
+    evaluate_decision_sweep,
+    evaluate_loso,
+    rank_sweep_rows,
+)
 from reson.training import resolve_feature_order
 
 
@@ -33,9 +38,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ignore-margin-ms", type=int, default=80)
     parser.add_argument("--pre-tol-ms", type=int, default=400, help="How early a down may fire before a click start")
     parser.add_argument("--post-tol-ms", type=int, default=600, help="How late a down may fire after a click end")
+    parser.add_argument(
+        "--include-glob",
+        default="*",
+        help="Only evaluate sessions whose dir name matches this glob (e.g. 'prompt-gui-*')",
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma list of name substrings to skip (e.g. 'prompt-gui-004'). 'bad' dirs are always skipped.",
+    )
+    parser.add_argument(
+        "--sweep",
+        default=None,
+        metavar="MODEL:FEATURES",
+        help="Sweep decision gates for one model family (e.g. 'threshold:wl') instead of comparing configs",
+    )
+    parser.add_argument("--sweep-top", type=int, default=8, help="How many ranked sweep rows to print")
     parser.add_argument("--report", default=None, help="Optional CSV path for per-config summary rows")
     parser.add_argument("--per-session", action="store_true", help="Also print per-session scores as JSON")
     return parser
+
+
+def _parse_exclude(spec: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in spec.split(",") if item.strip())
 
 
 def _parse_configs(spec: str) -> list[tuple[str, str]]:
@@ -93,11 +119,59 @@ def _print_table(rows: list[dict[str, object]]) -> None:
         print("".join(cells))
 
 
+def _print_sweep(rows: list[dict[str, float]], top: int) -> dict[str, float]:
+    ranked = rank_sweep_rows(rows)
+    headers = (
+        "enter exit dwell min_ev | detect rest/min art/min down_ms cancel"
+    )
+    print(headers)
+    print("-" * len(headers))
+    for row in ranked[:top]:
+        print(
+            f"{row['enter_threshold']:.2f}  {row['exit_threshold']:.2f} "
+            f"{int(row['enter_dwell_frames'])}     {int(row['min_event_ms']):3d}    | "
+            f"{row['detection_rate'] * 100:4.0f}%  "
+            f"{row['false_downs_rest_per_min']:6.2f}  {row['false_downs_artifact_per_min']:6.2f} "
+            f"{row['down_latency_ms_median']:6.0f}  {int(row['cancelled'])}"
+        )
+    best = ranked[0]
+    decision = {
+        "enter_threshold": best["enter_threshold"],
+        "exit_threshold": best["exit_threshold"],
+        "enter_dwell_frames": int(best["enter_dwell_frames"]),
+        "release_dwell_frames": int(best["release_dwell_frames"]),
+        "min_event_ms": int(best["min_event_ms"]),
+        "refractory_ms": int(best["refractory_ms"]),
+    }
+    print("\nbest decision config:")
+    print(json.dumps(decision, indent=2))
+    return decision
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    configs = _parse_configs(args.configs)
+    exclude = _parse_exclude(args.exclude)
     sessions_root = Path(args.sessions)
 
+    if args.sweep:
+        model, features = _parse_configs(args.sweep)[0]
+        rows = evaluate_decision_sweep(
+            sessions_root,
+            feature_order=resolve_feature_order(features),
+            model_name=model,
+            epochs=args.epochs,
+            seed=args.seed,
+            ignore_margin_ms=args.ignore_margin_ms,
+            pre_tol_ms=args.pre_tol_ms,
+            post_tol_ms=args.post_tol_ms,
+            include_glob=args.include_glob,
+            exclude=exclude,
+        )
+        print(f"[reson-eval] swept {len(rows)} decision configs for {model}:{features}\n")
+        _print_sweep(rows, args.sweep_top)
+        return
+
+    configs = _parse_configs(args.configs)
     summary_rows: list[dict[str, object]] = []
     session_rows: list[dict[str, object]] = []
     for model, features in configs:
@@ -112,6 +186,8 @@ def main() -> None:
                 ignore_margin_ms=args.ignore_margin_ms,
                 pre_tol_ms=args.pre_tol_ms,
                 post_tol_ms=args.post_tol_ms,
+                include_glob=args.include_glob,
+                exclude=exclude,
             )
         except ValueError as exc:
             print(f"[reson-eval] {model}:{features} skipped: {exc}", file=sys.stderr)

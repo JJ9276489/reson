@@ -214,16 +214,19 @@ class BinaryModelDetector:
         if self._press_start_ms is None:
             return
         duration = max(t_ms - self._press_start_ms, 0)
-        if duration >= self.min_event_ms:
-            self._events.append(
-                EdgeEvent(
-                    state="active",
-                    start_ms=self._press_start_ms,
-                    end_ms=t_ms,
-                    duration_ms=duration,
-                    phase="up",
-                )
+        # Every committed `down` gets exactly one terminal event. A press that
+        # clears min_event_ms ends in `up`; a shorter transient ends in
+        # `cancel` so downstream consumers never see a dangling `down`.
+        phase = "up" if duration >= self.min_event_ms else "cancel"
+        self._events.append(
+            EdgeEvent(
+                state="active",
+                start_ms=self._press_start_ms,
+                end_ms=t_ms,
+                duration_ms=duration,
+                phase=phase,
             )
+        )
         self._press_start_ms = None
         self._refractory_until_ms = t_ms + self.refractory_ms
 

@@ -30,25 +30,42 @@ class ClickerEngine:
         self.is_down = False
         self.click_count = 0
         self.last_down_ms: int | None = None
+        self.last_t_ms: int = 0
         self.last_click_duration_ms: int | None = None
 
-    def feed(self, sample: EmgSample) -> ClickerUpdate:
-        # The detector's edge state is authoritative for "held down"; a press
-        # shorter than min_event_ms emits a `down` but no `up`, so deriving
-        # is_down from events alone could leave the flag stuck on.
-        state = self.detector.update(sample)
-        self.probability = self.detector.last_probability
-        events = edge_events_to_switch_events(self.detector.pop_events())
+    def _apply(self, events: list[SwitchEvent]) -> None:
         for event in events:
             if event.phase == "down":
                 self.last_down_ms = event.t_ms
             elif event.phase == "up":
                 self.click_count += 1
                 self.last_click_duration_ms = event.duration_ms
+
+    def feed(self, sample: EmgSample) -> ClickerUpdate:
+        # The detector's edge state is authoritative for "held down"; a press
+        # shorter than min_event_ms emits a `down` but no `up`, so deriving
+        # is_down from events alone could leave the flag stuck on.
+        state = self.detector.update(sample)
+        self.last_t_ms = sample.t_ms
+        self.probability = self.detector.last_probability
+        events = edge_events_to_switch_events(self.detector.pop_events())
+        self._apply(events)
         self.is_down = state == "active"
         return ClickerUpdate(
             probability=self.probability,
             is_down=self.is_down,
+            click_count=self.click_count,
+            events=events,
+        )
+
+    def flush(self) -> ClickerUpdate:
+        """Close any press left open when the stream ends (e.g. replay finished)."""
+        events = edge_events_to_switch_events(self.detector.flush(self.last_t_ms))
+        self._apply(events)
+        self.is_down = False
+        return ClickerUpdate(
+            probability=self.probability,
+            is_down=False,
             click_count=self.click_count,
             events=events,
         )

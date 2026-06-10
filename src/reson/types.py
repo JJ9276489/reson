@@ -12,7 +12,7 @@ class EmgSample:
 
 
 EdgeState = Literal["rest", "active"]
-SwitchPhase = Literal["down", "up"]
+SwitchPhase = Literal["down", "up", "cancel"]
 
 
 @dataclass(frozen=True)

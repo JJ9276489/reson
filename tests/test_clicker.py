@@ -48,6 +48,21 @@ def test_clicker_counts_completed_press():
     assert engine.last_click_duration_ms is not None
 
 
+def test_flush_clears_open_press():
+    engine = ClickerEngine(_threshold_profile())
+    t = 0
+    for _ in range(40):  # quiet
+        engine.feed(EmgSample(t, 1000, 0))
+        t += 4
+    for i in range(60):  # ramp into a press and stop mid-press (no rest tail)
+        engine.feed(EmgSample(t, 1000 if i % 2 == 0 else 1500, 0))
+        t += 4
+    assert engine.is_down is True
+
+    engine.flush()
+    assert engine.is_down is False  # stream end must not leave the target stuck down
+
+
 def test_reset_counter():
     engine = ClickerEngine(_threshold_profile())
     engine.click_count = 5

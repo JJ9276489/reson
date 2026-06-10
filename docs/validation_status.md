@@ -53,6 +53,40 @@ Current evidence should be treated as prototype evidence:
 
 This is not enough evidence to claim robust EMG switching.
 
+## Preliminary Held-Out Evaluation
+
+`reson-eval` runs leave-one-session-out, event-level evaluation: for each
+session it trains on the others and replays the held-out session through the
+runtime detector. The numbers below are over **4 clean prompted sessions
+(`prompt-gui-001/002/003/005`), all recorded in a single sitting on one day**,
+excluding the contaminated `prompt-gui-004` and the older heterogeneous
+`interval-001`/`prompt-001` recordings. This is a within-sitting check, not a
+cross-day or cross-user result.
+
+Default decision gates:
+
+| Config | Detect | FP rest/min | FP artifact/min | Down latency (ms) |
+| --- | --- | --- | --- | --- |
+| threshold:wl | 100% | 3.41 | 21.0 | 188 |
+| logreg:wl | 100% | 5.69 | 20.0 | 168 |
+| logreg:all | 98% | 4.23 | 29.0 | 168 |
+
+A decision-gate sweep (`reson-eval --sweep`) over both single-feature families
+selects the same gates, with `threshold:wl` best:
+
+> enter_threshold 0.8, exit_threshold 0.4, enter_dwell 2, release_dwell 2,
+> min_event_ms 200, refractory_ms 80
+
+Tuned `threshold:wl` (held-out): **100% detection, 0.49 rest false downs/min,
+6.0 artifact false downs/min, 198 ms down latency.** Raising `min_event_ms` and
+the enter threshold cut rest false positives ~7x and artifact false positives
+~3.5x while keeping every click and staying under 200 ms.
+
+Caveats: single sitting, one wearer, four sessions; artifact false positives
+(~6/min) are still the dominant failure mode; held-out across *days* and across
+*users* remains untested. These are encouraging prototype numbers, not a
+validated control claim.
+
 ## Hypotheses
 
 Current working hypotheses:

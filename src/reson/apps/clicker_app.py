@@ -197,7 +197,8 @@ def main() -> None:
             i = state["i"]
             if i >= len(samples):
                 feed_timer.stop()
-                window.set_status("replay finished")
+                window.engine.flush()  # close any press open at end of recording
+                window.set_status(f"replay finished · {window.engine.click_count} clicks")
                 return
             base_t = samples[0].t_ms
             budget = i + 25  # cap per tick so the UI stays responsive

@@ -13,9 +13,9 @@ def edge_event_to_switch_event(event: EdgeEvent) -> SwitchEvent | None:
             duration_ms=0,
             source_state="active",
         )
-    if event.phase == "up" and event.state != "rest":
+    if event.phase in ("up", "cancel") and event.state != "rest":
         return SwitchEvent(
-            phase="up",
+            phase=event.phase,
             t_ms=event.end_ms,
             duration_ms=event.duration_ms,
             source_state="active",

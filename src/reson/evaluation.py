@@ -21,8 +21,10 @@ Everything here is pure-Python and hardware-free so it can run in CI.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 from dataclasses import dataclass, field
+from itertools import product
 from pathlib import Path
 from statistics import mean, median
 
@@ -74,6 +76,7 @@ class SessionScore:
     false_downs_rest: int = 0
     false_downs_artifact: int = 0
     false_downs_other: int = 0
+    n_cancelled: int = 0  # presses rejected by min_event_ms (no click delivered)
     rest_seconds: float = 0.0
     artifact_seconds: float = 0.0
     down_latencies_ms: list[float] = field(default_factory=list)
@@ -156,6 +159,10 @@ def pair_presses(switch_events: list[SwitchEvent]) -> list[Press]:
         elif event.phase == "up" and pending_down is not None:
             presses.append(Press(down_ms=pending_down, up_ms=event.t_ms))
             pending_down = None
+        elif event.phase == "cancel" and pending_down is not None:
+            # Terminal, but not a completed click: leave up_ms=None.
+            presses.append(Press(down_ms=pending_down, up_ms=None))
+            pending_down = None
     if pending_down is not None:
         presses.append(Press(down_ms=pending_down, up_ms=None))
     return presses
@@ -190,10 +197,16 @@ def score_session(
             score.rest_seconds += seconds
 
     presses = pair_presses(switch_events)
+    # Only completed presses (terminated by `up`) deliver a click. Presses the
+    # detector cancelled (min_event_ms) delivered nothing, so they count toward
+    # neither detections nor false positives — just tracked for visibility.
+    score.n_cancelled = sum(1 for press in presses if press.up_ms is None)
+    clicks_delivered = [press for press in presses if press.up_ms is not None]
+
     used: set[int] = set()
     for start_ms, end_ms in clicks:
         match_idx: int | None = None
-        for idx, press in enumerate(presses):
+        for idx, press in enumerate(clicks_delivered):
             if idx in used:
                 continue
             if (start_ms - pre_tol_ms) <= press.down_ms <= (end_ms + post_tol_ms):
@@ -202,14 +215,13 @@ def score_session(
         if match_idx is None:
             continue
         used.add(match_idx)
-        press = presses[match_idx]
+        press = clicks_delivered[match_idx]
         score.n_detected += 1
         score.down_latencies_ms.append(float(press.down_ms - start_ms))
-        if press.up_ms is not None:
-            score.up_latencies_ms.append(float(press.up_ms - end_ms))
-            score.duration_errors_ms.append(float(press.duration_ms - (end_ms - start_ms)))
+        score.up_latencies_ms.append(float(press.up_ms - end_ms))
+        score.duration_errors_ms.append(float(press.duration_ms - (end_ms - start_ms)))
 
-    for idx, press in enumerate(presses):
+    for idx, press in enumerate(clicks_delivered):
         if idx in used:
             continue
         bucket = _classify_false_down(press.down_ms, phases)
@@ -253,6 +265,7 @@ def aggregate_scores(scores: list[SessionScore]) -> dict[str, float]:
         "detection_rate": (n_detected / n_clicks) if n_clicks else 0.0,
         "false_downs_rest": float(false_rest),
         "false_downs_artifact": float(false_artifact),
+        "cancelled": float(sum(s.n_cancelled for s in scores)),
         "false_downs_rest_per_min": _per_minute(false_rest, rest_seconds),
         "false_downs_artifact_per_min": _per_minute(false_artifact, artifact_seconds),
         "down_latency_ms_median": _med(down_lat),
@@ -264,13 +277,26 @@ def aggregate_scores(scores: list[SessionScore]) -> dict[str, float]:
     }
 
 
-def list_session_dirs(sessions_root: Path) -> list[Path]:
-    """Session dirs eligible for evaluation: have raw+labels, not hidden/bad."""
+def list_session_dirs(
+    sessions_root: Path,
+    *,
+    include_glob: str = "*",
+    exclude: tuple[str, ...] = (),
+) -> list[Path]:
+    """Session dirs eligible for evaluation: have raw+labels, not hidden/bad.
+
+    `include_glob` keeps only directory names matching the glob (e.g.
+    ``prompt-gui-*``). `exclude` drops any session whose name contains one of
+    the given substrings (e.g. ``("prompt-gui-004",)``). Directories whose name
+    contains ``bad`` are always skipped.
+    """
     dirs: list[Path] = []
-    for path in sorted(sessions_root.glob("*")):
+    for path in sorted(sessions_root.glob(include_glob)):
         if not path.is_dir() or path.name.startswith("_"):
             continue
         if "bad" in path.name.lower():
+            continue
+        if any(token and token in path.name for token in exclude):
             continue
         if (path / "raw.csv").exists() and (path / "labels.jsonl").exists():
             dirs.append(path)
@@ -298,6 +324,8 @@ def evaluate_loso(
     ignore_margin_ms: int = 80,
     pre_tol_ms: int = 400,
     post_tol_ms: int = 600,
+    include_glob: str = "*",
+    exclude: tuple[str, ...] = (),
 ) -> tuple[list[SessionScore], dict[str, float]]:
     """Leave-one-session-out evaluation.
 
@@ -305,27 +333,163 @@ def evaluate_loso(
     replay the held-out session through the runtime detector, so every reported
     number is held-out performance.
     """
-    session_dirs = list_session_dirs(sessions_root)
+    folds = _build_folds(
+        sessions_root,
+        feature_order=feature_order,
+        model_name=model_name,
+        epochs=epochs,
+        seed=seed,
+        ignore_margin_ms=ignore_margin_ms,
+        include_glob=include_glob,
+        exclude=exclude,
+    )
+    scores = [
+        score_session(
+            fold.name, replay_session(fold.profile, fold.raw_path), fold.clicks, fold.phases,
+            pre_tol_ms=pre_tol_ms, post_tol_ms=post_tol_ms,
+        )
+        for fold in folds
+    ]
+    return scores, aggregate_scores(scores)
+
+
+@dataclass(frozen=True)
+class _Fold:
+    name: str
+    profile: BinaryModelProfile
+    raw_path: Path
+    clicks: list[tuple[int, int]]
+    phases: list[PhaseWindow]
+
+
+def _build_folds(
+    sessions_root: Path,
+    *,
+    feature_order: list[str],
+    model_name: str,
+    epochs: int,
+    seed: int,
+    ignore_margin_ms: int,
+    include_glob: str,
+    exclude: tuple[str, ...],
+) -> list[_Fold]:
+    session_dirs = list_session_dirs(sessions_root, include_glob=include_glob, exclude=exclude)
     session_names = {path.name for path in session_dirs}
     dataset = load_interval_sessions(sessions_root, feature_order=feature_order, ignore_margin_ms=ignore_margin_ms)
     dataset = Dataset([ex for ex in dataset.examples if ex.session in session_names], feature_order)
     if len({ex.session for ex in dataset.examples}) < 2:
         raise ValueError("leave-one-session-out evaluation needs at least 2 labeled sessions")
 
-    scores: list[SessionScore] = []
+    folds: list[_Fold] = []
     for held_out in session_dirs:
         name = held_out.name
         train_examples = [ex for ex in dataset.examples if ex.session != name]
         if not train_examples:
             continue
-        train = Dataset(train_examples, feature_order)
-        profile = _train_fold(model_name, train, epochs=epochs, seed=seed)
-        switch_events = replay_session(profile, held_out / "raw.csv")
-        clicks = read_label_intervals(held_out / "labels.jsonl")
-        phases = read_phase_windows(held_out / "labels.jsonl")
-        scores.append(
-            score_session(
-                name, switch_events, clicks, phases, pre_tol_ms=pre_tol_ms, post_tol_ms=post_tol_ms
+        profile = _train_fold(model_name, Dataset(train_examples, feature_order), epochs=epochs, seed=seed)
+        folds.append(
+            _Fold(
+                name=name,
+                profile=profile,
+                raw_path=held_out / "raw.csv",
+                clicks=read_label_intervals(held_out / "labels.jsonl"),
+                phases=read_phase_windows(held_out / "labels.jsonl"),
             )
         )
-    return scores, aggregate_scores(scores)
+    return folds
+
+
+def default_decision_grid() -> list[dict[str, float]]:
+    """A small, sensible grid over the runtime decision gates."""
+    grid: list[dict[str, float]] = []
+    for enter, exit_, min_event, enter_dwell in product(
+        (0.6, 0.7, 0.8), (0.4, 0.5), (50, 120, 200), (2, 3)
+    ):
+        if exit_ >= enter:
+            continue
+        grid.append(
+            {
+                "enter_threshold": enter,
+                "exit_threshold": exit_,
+                "enter_dwell_frames": enter_dwell,
+                "release_dwell_frames": 2,
+                "min_event_ms": min_event,
+                "refractory_ms": 80,
+            }
+        )
+    return grid
+
+
+def evaluate_decision_sweep(
+    sessions_root: Path,
+    *,
+    feature_order: list[str],
+    model_name: str,
+    decision_grid: list[dict[str, float]] | None = None,
+    epochs: int = 200,
+    seed: int = 7,
+    ignore_margin_ms: int = 80,
+    pre_tol_ms: int = 400,
+    post_tol_ms: int = 600,
+    include_glob: str = "*",
+    exclude: tuple[str, ...] = (),
+) -> list[dict[str, float]]:
+    """Sweep runtime decision gates for one model family.
+
+    Each fold is trained once; the (config-independent) model is then replayed
+    under every decision config. Returns one aggregated row per decision config.
+    """
+    grid = decision_grid if decision_grid is not None else default_decision_grid()
+    folds = _build_folds(
+        sessions_root,
+        feature_order=feature_order,
+        model_name=model_name,
+        epochs=epochs,
+        seed=seed,
+        ignore_margin_ms=ignore_margin_ms,
+        include_glob=include_glob,
+        exclude=exclude,
+    )
+    rows: list[dict[str, float]] = []
+    for decision in grid:
+        scores = []
+        for fold in folds:
+            profile = dataclasses.replace(fold.profile, decision=dict(decision))
+            switch_events = replay_session(profile, fold.raw_path)
+            scores.append(
+                score_session(
+                    fold.name, switch_events, fold.clicks, fold.phases,
+                    pre_tol_ms=pre_tol_ms, post_tol_ms=post_tol_ms,
+                )
+            )
+        rows.append({**decision, **aggregate_scores(scores)})
+    return rows
+
+
+def rank_sweep_rows(
+    rows: list[dict[str, float]],
+    *,
+    min_detection_rate: float = 0.9,
+    max_down_latency_ms: float = 200.0,
+) -> list[dict[str, float]]:
+    """Order sweep rows for *usable clicker* behavior.
+
+    Prefer configs that meet the responsiveness floor (detection rate and down
+    latency), then minimize rest false positives, then artifact false positives.
+    Rows that miss the floor sort last but are still returned.
+    """
+
+    def key(row: dict[str, float]) -> tuple:
+        meets = (
+            row.get("detection_rate", 0.0) >= min_detection_rate
+            and row.get("down_latency_ms_median", 1e9) <= max_down_latency_ms
+        )
+        return (
+            0 if meets else 1,
+            row.get("false_downs_rest_per_min", 1e9),
+            row.get("false_downs_artifact_per_min", 1e9),
+            -row.get("detection_rate", 0.0),
+            row.get("down_latency_ms_median", 1e9),
+        )
+
+    return sorted(rows, key=key)

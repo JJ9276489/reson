@@ -83,6 +83,25 @@ def test_aggregate_scores_computes_per_minute_rates():
     assert abs(agg["false_downs_rest_per_min"] - 12.0) < 1e-9
 
 
+def _cancel(t_ms: int, duration_ms: int) -> SwitchEvent:
+    return SwitchEvent(phase="cancel", t_ms=t_ms, duration_ms=duration_ms, source_state="active")
+
+
+def test_cancelled_press_is_not_a_false_positive():
+    clicks = [(5000, 6000)]
+    phases = [
+        PhaseWindow("REST", None, 0, 5000),
+        PhaseWindow("CLICK 1/1", "CLICK", 5000, 6000),
+    ]
+    # A short transient during rest: down then cancel -> no click delivered.
+    events = [_down(2000), _cancel(2030, 30), _down(5050), _up(6050, 1000)]
+    score = score_session("s1", events, clicks, phases)
+
+    assert score.n_detected == 1
+    assert score.false_downs_rest == 0  # cancelled transient is not a false click
+    assert score.n_cancelled == 1
+
+
 def test_missed_click_when_no_down_in_window():
     clicks = [(5000, 6000)]
     phases = [PhaseWindow("CLICK 1/1", "CLICK", 5000, 6000)]

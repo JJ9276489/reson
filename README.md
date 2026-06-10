@@ -302,6 +302,11 @@ Output is JSONL:
 {"type":"switch","phase":"up","t_ms":12580,"duration_ms":235,"source_state":"active","host_time_s":1776400000.358}
 ```
 
+Event-stream invariant: every `down` is followed by exactly one terminal
+event. A press that clears `min_event_ms` ends in `up`; a shorter transient
+ends in `cancel` (same fields, `phase":"cancel"`) so consumers never see a
+dangling `down`. Treat `cancel` as "no click delivered".
+
 Downstream consumers should depend on this switch-event schema, not on model internals.
 
 ## Evaluate (held-out, event-level)
@@ -313,17 +318,26 @@ intervals and prompt-phase windows. Evaluation is leave-one-session-out, so
 every number is held-out performance.
 
 ```bash
+# Compare baselines on only the clean prompted sessions:
 reson-eval \
   --sessions sessions \
+  --include-glob 'prompt-gui-*' \
+  --exclude prompt-gui-004 \
   --configs threshold:wl,logreg:wl,logreg:all \
-  --report studies/eval_summary.csv \
-  --per-session
+  --report studies/eval_summary.csv
+
+# Sweep the runtime decision gates for one model family:
+reson-eval --sessions sessions --include-glob 'prompt-gui-*' --exclude prompt-gui-004 \
+  --sweep threshold:wl
 ```
 
 It reports the metrics listed under "What Good Performance Would Mean":
 detection rate, missed clicks, false `down` events per minute during rest and
 during artifact-only windows, and down/up latency and event-duration error.
-Sessions whose directory name contains `bad` are skipped.
+`--include-glob`/`--exclude` restrict the session set (directories containing
+`bad` are always skipped); `--sweep` ranks `enter_threshold`/`exit_threshold`/
+`min_event_ms`/dwell combinations for usable clicker behavior. See
+`docs/validation_status.md` for the current held-out numbers and tuned config.
 
 ## Demo Clicker
 
