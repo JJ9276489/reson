@@ -7,6 +7,21 @@ name = "reson"
 version = "0.1.0"
 description = "EMG-driven binary switch pipeline from ESP32"
 readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Jerald Yuan", email = "jeraldhu.yuan@gmail.com"},
+]
+keywords = ["EMG", "electromyography", "assistive-technology", "accessibility", "HMI", "switch", "ESP32"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "Topic :: Adaptive Technologies",
+  "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "pyserial>=3.5",
@@ -21,6 +36,10 @@ dev = [
 ml = [
   "torch>=2.2",
 ]
+
+[project.urls]
+Repository = "https://github.com/JJ9276489/reson"
+Issues = "https://github.com/JJ9276489/reson/issues"
 
 [project.scripts]
 reson-debug = "reson.apps.debug_monitor:main"

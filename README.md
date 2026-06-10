@@ -1,5 +1,9 @@
 # reson
 
+[![CI](https://github.com/JJ9276489/reson/actions/workflows/ci.yml/badge.svg)](https://github.com/JJ9276489/reson/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+
 Reson is an early-stage EMG binary switch prototype.
 
 It is not a full HMI stack. Its current product boundary is deliberately narrow:
@@ -365,3 +369,18 @@ pkill -f "pyserial-miniterm|reson-debug|reson-switch|reson-record"
 ```bash
 python -m pytest -q
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and hardware
+reports from real setups are especially welcome at this stage.
+
+## Citation
+
+If you use Reson in research, please cite it via the metadata in
+[CITATION.cff](CITATION.cff) (GitHub renders a "Cite this repository"
+button from it).
+
+## License
+
+Reson is released under the [MIT License](LICENSE).

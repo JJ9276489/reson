@@ -1,0 +1,20 @@
+{
+  "title": "Reson: an open-source EMG binary switch pipeline",
+  "description": "Reson is an early-stage, open-source electromyography (EMG) binary switch pipeline built on low-cost hardware (ESP32 + AD8232). It provides serial ingestion, feature extraction, interval-labeled and prompted data collection, baseline model training, and a runtime that emits binary switch down/up events, intended as a click layer for assistive human-machine interfaces such as eye-tracking cursor systems.",
+  "license": "MIT",
+  "upload_type": "software",
+  "creators": [
+    {
+      "name": "Yuan, Jerald"
+    }
+  ],
+  "keywords": [
+    "EMG",
+    "electromyography",
+    "assistive technology",
+    "accessibility",
+    "human-machine interface",
+    "binary switch",
+    "ESP32"
+  ]
+}
