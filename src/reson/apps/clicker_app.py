@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
+    from collections import deque
+
     from reson.binary_model import BinaryModelDetector, load_binary_profile
     from reson.clicker import ClickerEngine
     from reson.qt_runtime import configure_qt_platform_plugin_path, validate_python_runtime
@@ -100,28 +102,51 @@ def main() -> None:
             self._running = False
             self.reader.close()
 
+    PHASE_COLOR = {"down": "#2e7d32", "up": "#1565c0", "cancel": "#9e9e9e"}
+
     class ClickerWindow(QWidget):
         def __init__(self) -> None:
             super().__init__()
             self.engine = ClickerEngine(profile)
+            self.enter_gate = self.engine.detector.enter_threshold
+            self.exit_gate = self.engine.detector.exit_threshold
+            self._events: deque = deque(maxlen=8)
             self.setWindowTitle("reson clicker")
-            self.resize(420, 480)
+            self.resize(520, 680)
 
             self.target = QLabel("READY")
             self.target.setAlignment(Qt.AlignCenter)
-            self.target.setFixedHeight(220)
+            self.target.setFixedHeight(260)
             self._set_target(False)
 
             self.count_label = QLabel("0")
             self.count_label.setAlignment(Qt.AlignCenter)
-            self.count_label.setStyleSheet("font-size: 48px; font-weight: bold;")
-            clicks_caption = QLabel("clicks")
+            self._count_base = "font-size: 72px; font-weight: bold;"
+            self.count_label.setStyleSheet(self._count_base)
+            clicks_caption = QLabel("clicks detected")
             clicks_caption.setAlignment(Qt.AlignCenter)
+            clicks_caption.setStyleSheet("color: gray;")
 
             self.prob_bar = QProgressBar()
             self.prob_bar.setRange(0, 100)
             self.prob_bar.setTextVisible(True)
+            self.prob_bar.setFixedHeight(40)
             self.prob_bar.setFormat("p = %p%")
+
+            self.gate_label = QLabel(
+                f"fires when p ≥ {self.enter_gate:.0%} · releases when p ≤ {self.exit_gate:.0%}"
+            )
+            self.gate_label.setAlignment(Qt.AlignCenter)
+            self.gate_label.setStyleSheet("color: gray; font-size: 12px;")
+
+            self.log_label = QLabel("")
+            self.log_label.setTextFormat(Qt.RichText)
+            self.log_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            self.log_label.setFixedHeight(150)
+            self.log_label.setStyleSheet(
+                "font-family: Menlo, monospace; font-size: 12px; background:#fafafa; "
+                "border:1px solid #e0e0e0; border-radius:6px; padding:6px;"
+            )
 
             self.status = QLabel("")
             self.status.setAlignment(Qt.AlignCenter)
@@ -135,6 +160,8 @@ def main() -> None:
             layout.addWidget(self.count_label)
             layout.addWidget(clicks_caption)
             layout.addWidget(self.prob_bar)
+            layout.addWidget(self.gate_label)
+            layout.addWidget(self.log_label)
             row = QHBoxLayout()
             row.addWidget(reset)
             layout.addLayout(row)
@@ -148,31 +175,61 @@ def main() -> None:
             self._ui_timer.timeout.connect(self._refresh)
             self._ui_timer.start(33)
 
-        def _set_target(self, down: bool) -> None:
+        def _set_target(self, down: bool, *, flash: bool = False) -> None:
             if down:
+                bg = "#43a047" if flash else "#2e7d32"
                 self.target.setText("CLICK")
                 self.target.setStyleSheet(
-                    "background:#2e7d32; color:white; font-size:40px; font-weight:bold; border-radius:12px;"
+                    f"background:{bg}; color:white; font-size:48px; font-weight:bold; border-radius:14px;"
                 )
             else:
                 self.target.setText("READY")
                 self.target.setStyleSheet(
-                    "background:#e0e0e0; color:#555; font-size:32px; border-radius:12px;"
+                    "background:#e0e0e0; color:#555; font-size:34px; border-radius:14px;"
                 )
+
+        def _flash_count(self) -> None:
+            self.count_label.setStyleSheet(self._count_base + " color:#1565c0;")
+            QTimer.singleShot(180, lambda: self.count_label.setStyleSheet(self._count_base))
 
         def on_sample(self, sample) -> None:
             update = self.engine.feed(sample)
             for event in update.events:
+                self._events.appendleft((event.t_ms, event.phase))
                 if event.phase == "down":
                     QApplication.beep()
+                    self._set_target(True, flash=True)
+                elif event.phase == "up":
+                    self._flash_count()
 
         def _refresh(self) -> None:
-            self.prob_bar.setValue(int(round(self.engine.probability * 100)))
+            pct = int(round(self.engine.probability * 100))
+            self.prob_bar.setValue(pct)
+            active = self.engine.probability >= self.enter_gate
+            chunk = "#2e7d32" if active else "#90a4ae"
+            self.prob_bar.setStyleSheet(
+                "QProgressBar{border:1px solid #cfcfcf; border-radius:6px; text-align:center;}"
+                f"QProgressBar::chunk{{background:{chunk}; border-radius:5px;}}"
+            )
             self._set_target(self.engine.is_down)
             self.count_label.setText(str(self.engine.click_count))
+            self.log_label.setText(self._render_log())
+
+        def _render_log(self) -> str:
+            if not self._events:
+                return "<span style='color:#999'>waiting for events…</span>"
+            lines = []
+            for t_ms, phase in self._events:
+                color = PHASE_COLOR.get(phase, "#555")
+                lines.append(
+                    f"<span style='color:#999'>{t_ms:>8d} ms</span> "
+                    f"<b style='color:{color}'>{phase.upper()}</b>"
+                )
+            return "<br>".join(lines)
 
         def _reset(self) -> None:
             self.engine.reset_counter()
+            self._events.clear()
             self.count_label.setText("0")
 
         def set_status(self, text: str) -> None:
