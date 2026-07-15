@@ -24,6 +24,7 @@ It is not a complete HMI system. It does not own eye tracking, pointer movement,
 
 | Question | File |
 | --- | --- |
+| What should downstream controllers import? | `src/reson/api.py` |
 | What is the serial contract parser? | `src/reson/parser.py` |
 | How does serial reconnect work? | `src/reson/serial_io.py` |
 | Where are features computed? | `src/reson/features.py` |
@@ -41,7 +42,7 @@ It is not a complete HMI system. It does not own eye tracking, pointer movement,
 | `reson-record` | Terminal interval recorder | `src/reson/apps/record_app.py` |
 | `reson-train` | Train a binary model profile | `src/reson/apps/train_app.py` |
 | `reson-study` | Run model/feature/data scaling sweeps | `src/reson/apps/study_app.py` |
-| `reson-switch` | Emit switch JSONL events from a trained profile | `src/reson/apps/switch_app.py` |
+| `reson-switch` | Emit switch JSONL events from a trained profile; thin CLI wrapper around `reson.api` | `src/reson/apps/switch_app.py` |
 | `reson-eval` | Leave-one-session-out event-level evaluation | `src/reson/apps/eval_app.py`, `src/reson/evaluation.py` |
 | `reson-clicker` | Demo click target driven by a trained model (live or replay) | `src/reson/apps/clicker_app.py`, `src/reson/clicker.py` |
 
@@ -121,6 +122,12 @@ Useful review questions:
 - Are labels represented as intervals rather than point clicks?
 - Are simple baselines reported before larger models?
 - Does evaluation use held-out sessions rather than random frames from the same session?
+- Does every emitted `down`, including a later `cancel`, remain visible in
+  false-activation accounting?
+- Were decision gates selected in inner folds rather than from the outer-fold
+  results being reported?
+- Are all phase/exposure endpoints bounded by usable raw-sample coverage rather
+  than trusted directly from annotations?
 - Are hardware limitations clearly separated from software limitations?
 
 Questions not yet answerable from this repo alone:
