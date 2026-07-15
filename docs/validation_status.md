@@ -53,39 +53,38 @@ Current evidence should be treated as prototype evidence:
 
 This is not enough evidence to claim robust EMG switching.
 
-## Preliminary Held-Out Evaluation
+## Adversarial Held-Out Evaluation
 
-`reson-eval` runs leave-one-session-out, event-level evaluation: for each
-session it trains on the others and replays the held-out session through the
-runtime detector. The numbers below are over **4 clean prompted sessions
-(`prompt-gui-001/002/003/005`), all recorded in a single sitting on one day**,
-excluding the contaminated `prompt-gui-004` and the older heterogeneous
-`interval-001`/`prompt-001` recordings. This is a within-sitting check, not a
-cross-day or cross-user result.
+The earlier preliminary table and its 100%-detection statement have been
+withdrawn. An adversarial audit found that the legacy scorer used an overly
+broad match window, excluded cancelled `down` activations, omitted
+`false_downs_other` from aggregate ranking, and selected runtime gates after
+inspecting the same outer folds used for the reported result.
 
-Default decision gates:
+The corrected scorer matches click onset within `[-200, +200] ms`, counts every
+unmatched emitted `down`, and reports completed false clicks as a subset. Gate
+selection now has a nested LOSO path. Results over all five main prompted
+sessions, including the formerly excluded `prompt-gui-004`, are:
 
-| Config | Detect | FP rest/min | FP artifact/min | Down latency (ms) |
-| --- | --- | --- | --- | --- |
-| threshold:wl | 100% | 3.41 | 21.0 | 188 |
-| logreg:wl | 100% | 5.69 | 20.0 | 168 |
-| logreg:all | 98% | 4.23 | 29.0 | 168 |
+| Threshold gates | Delivered | False downs | Rest/min | Artifact/min | Other | Onset median |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Runtime default (`0.6`, 50 ms minimum) | 53/100 | 156 | 9.10 | 18.00 | 62 | 136 ms |
+| Previously tuned (`0.8`, 200 ms minimum) | 46/100 | 79 | 0.91 | 6.00 | 64 | 142 ms |
 
-A decision-gate sweep (`reson-eval --sweep`) over both single-feature families
-selects the same gates, with `threshold:wl` best:
+The tuned gates reduce false activations but lose seven clicks already
+delivered by the weak default baseline, so they fail the frozen acceptance
+contract. In the nested run, neither candidate reached the 100% inner delivery
+gate in any outer fold. No improvement was accepted.
 
-> enter_threshold 0.8, exit_threshold 0.4, enter_dwell 2, release_dwell 2,
-> min_event_ms 200, refractory_ms 80
+The evaluator now applies that contract programmatically to outer-fold
+runtime-default and candidate scores. It checks delivered-click identities,
+not just aggregate detection counts, and refuses a passing exit status unless
+both the inner eligibility gates and all four baseline-relative criteria pass.
 
-Tuned `threshold:wl` (held-out): **100% detection, 0.49 rest false downs/min,
-6.0 artifact false downs/min, 198 ms down latency.** Raising `min_event_ms` and
-the enter threshold cut rest false positives ~7x and artifact false positives
-~3.5x while keeping every click and staying under 200 ms.
-
-Caveats: single sitting, one wearer, four sessions; artifact false positives
-(~6/min) are still the dominant failure mode; held-out across *days* and across
-*users* remains untested. These are encouraging prototype numbers, not a
-validated control claim.
+See `docs/adversarial_evaluation.md` for the frozen criteria, exact commands,
+metric semantics, critic findings, and remaining validation boundary. These
+are retrospective results from one wearer and one sitting, not cross-day or
+cross-user evidence.
 
 ## Hypotheses
 

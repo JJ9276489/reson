@@ -11,6 +11,7 @@ def test_eval_parser_defaults():
     args = build_eval_parser().parse_args([])
     assert args.sessions == "sessions"
     assert args.configs == "threshold:wl,logreg:wl,logreg:all"
+    assert (args.pre_tol_ms, args.post_tol_ms) == (200, 200)
 
 
 def test_parse_configs():

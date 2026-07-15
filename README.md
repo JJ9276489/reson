@@ -35,6 +35,7 @@ Implemented:
 - Interval-labeled data collection through `reson-debug` and `reson-record`.
 - Prompted interval data collection through `reson-debug --prompt` or `reson-prompt-record`, avoiding keyboard labels during signal windows.
 - Binary model training for threshold, logistic regression, and optional PyTorch sequence models.
+- Public headless switch API for downstream controllers.
 - Runtime switch output as JSONL `down` / `up` events.
 
 Tested in repo:
@@ -123,12 +124,51 @@ Core source files:
 
 | Layer | File |
 | --- | --- |
+| Public switch API | `src/reson/api.py` |
 | Serial IO | `src/reson/serial_io.py` |
 | Parser | `src/reson/parser.py` |
 | Feature extraction | `src/reson/features.py` |
 | Binary model runtime | `src/reson/binary_model.py` |
 | Switch event conversion | `src/reson/switch.py` |
 | Training | `src/reson/training.py` |
+
+## Public Switch API
+
+Downstream HMI projects should integrate through `reson.api`, not the demo
+clicker UI. The API exposes EMG switch state and lifecycle events only; it does
+not own pointer movement, gaze tracking, or mouse injection.
+
+Import API:
+
+```python
+from reson import EmgSample, ResonSwitch
+
+switch = ResonSwitch.from_profile("models/clean_wl_threshold_tuned.json")
+update = switch.feed(EmgSample(t_ms=0, raw=1000, env=0))
+
+for event in update.events:
+    print(event.phase)
+```
+
+Each `SwitchUpdate` includes:
+
+- `probability`: current model probability.
+- `is_active`: current held/active state.
+- `events`: zero or more `SwitchEvent` lifecycle edges.
+
+Call `flush()` when a stream ends so an open press is terminated:
+
+```python
+final_update = switch.flush()
+```
+
+For process boundaries, use the existing JSONL CLI:
+
+```bash
+reson-switch --port /dev/cu.usbserial-XXXX --baud 230400 --profile models/clean_wl_threshold_tuned.json --status
+```
+
+`reson-switch` is now a thin wrapper around the same public API.
 
 ## Install
 
@@ -320,33 +360,41 @@ Downstream consumers should depend on this switch-event schema, not on model int
 
 ## Evaluate (held-out, event-level)
 
-`reson-eval` scores models the way they are actually used: it replays each
-recorded session's raw samples through the runtime detector, collects the
-emitted `down`/`up` events, and compares them against the labeled click
-intervals and prompt-phase windows. Evaluation is leave-one-session-out, so
-every number is held-out performance.
+`reson-eval` replays raw samples through the runtime detector and scores the
+emitted lifecycle against click-onset and prompt-phase annotations. The primary
+scorer uses a frozen `[-200, +200] ms` onset window, counts every unmatched
+`down` (including later-cancelled activations), and keeps completed false clicks
+as a diagnostic subset. Phase exposure is accepted only inside the finite
+first-to-last usable raw-sample span; out-of-recording annotations fail the
+evaluation instead of enlarging a rate denominator. A raw gap over 100 ms also
+fails continuous-exposure validation rather than being counted as quiet time.
 
 ```bash
-# Compare baselines on only the clean prompted sessions:
+# Compare model baselines across the prompted sessions:
 reson-eval \
   --sessions sessions \
   --include-glob 'prompt-gui-*' \
-  --exclude prompt-gui-004 \
   --configs threshold:wl,logreg:wl,logreg:all \
   --report studies/eval_summary.csv
 
-# Sweep the runtime decision gates for one model family:
-reson-eval --sessions sessions --include-glob 'prompt-gui-*' --exclude prompt-gui-004 \
-  --sweep threshold:wl
+# Acceptance-oriented gate selection: two predeclared configs, inner LOSO
+# selection, and one score on each untouched outer session:
+reson-eval --sessions sessions --include-glob 'prompt-gui-*' \
+  --nested-sweep threshold:wl --per-session
+
+# Broad sweeps remain exploratory, not acceptance evidence:
+reson-eval --sessions sessions --include-glob 'prompt-gui-*' \
+  --sweep threshold:wl --decision-grid full
 ```
 
 It reports the metrics listed under "What Good Performance Would Mean":
 detection rate, missed clicks, false `down` events per minute during rest and
 during artifact-only windows, and down/up latency and event-duration error.
 `--include-glob`/`--exclude` restrict the session set (directories containing
-`bad` are always skipped); `--sweep` ranks `enter_threshold`/`exit_threshold`/
-`min_event_ms`/dwell combinations for usable clicker behavior. See
-`docs/validation_status.md` for the current held-out numbers and tuned config.
+`bad` are always skipped). `--nested-sweep` defaults to the frozen runtime
+default and previously documented tuned gates; `--decision-grid full` opts into
+the broader exploratory grid. See `docs/adversarial_evaluation.md` for the
+frozen contract and why the former 100%-detection claim was withdrawn.
 
 ## Demo Clicker
 
@@ -368,11 +416,15 @@ The current goal is not high benchmark accuracy on a single recording. The usefu
 
 Minimum useful metrics:
 
-- False `down` events per minute during rest and artifact-only periods.
+- Every unmatched `down` per minute during rest and artifact-only periods,
+  including activations that later end in `cancel`.
+- Raw `false_downs_other` and completed false clicks; neither may disappear
+  from aggregate ranking.
 - Missed intended clicks per minute during guided click sessions.
-- Down latency from intended clench onset.
+- Median and tail down latency from intended clench onset.
 - Up latency after intended release.
-- Performance on held-out sessions, not only random frames from the same recording.
+- Nested gate selection with untouched outer sessions, not only random frames
+  or gates chosen from aggregate outer-fold results.
 - Stability after unplug/replug and app restart.
 
 Stronger claims should wait until there are multiple sessions across placements, days, and artifact conditions.

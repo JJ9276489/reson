@@ -10,6 +10,8 @@ from reson.evaluation import (
     SessionScore,
     evaluate_decision_sweep,
     evaluate_loso,
+    evaluate_nested_decision_selection,
+    frozen_decision_grid,
     rank_sweep_rows,
 )
 from reson.training import resolve_feature_order
@@ -36,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--ignore-margin-ms", type=int, default=80)
-    parser.add_argument("--pre-tol-ms", type=int, default=400, help="How early a down may fire before a click start")
-    parser.add_argument("--post-tol-ms", type=int, default=600, help="How late a down may fire after a click end")
+    parser.add_argument("--pre-tol-ms", type=int, default=200, help="How early a down may fire before click onset")
+    parser.add_argument("--post-tol-ms", type=int, default=200, help="How late a down may fire after click onset")
     parser.add_argument(
         "--include-glob",
         default="*",
@@ -54,7 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MODEL:FEATURES",
         help="Sweep decision gates for one model family (e.g. 'threshold:wl') instead of comparing configs",
     )
+    parser.add_argument(
+        "--nested-sweep",
+        default=None,
+        metavar="MODEL:FEATURES",
+        help="Select gates in inner LOSO folds, then score each untouched outer session once",
+    )
     parser.add_argument("--sweep-top", type=int, default=8, help="How many ranked sweep rows to print")
+    parser.add_argument(
+        "--decision-grid",
+        choices=("full", "frozen"),
+        default=None,
+        help="Gate grid: nested runs default to the two predeclared frozen configs; --sweep defaults to full",
+    )
     parser.add_argument("--report", default=None, help="Optional CSV path for per-config summary rows")
     parser.add_argument("--per-session", action="store_true", help="Also print per-session scores as JSON")
     return parser
@@ -83,17 +97,29 @@ def _session_row(model: str, features: str, score: SessionScore) -> dict[str, ob
         "features": features,
         "session": score.session,
         "clicks": score.n_clicks,
+        "activated": score.n_activated,
         "detected": score.n_detected,
         "missed": score.n_missed,
         "false_downs_rest": score.false_downs_rest,
         "false_downs_artifact": score.false_downs_artifact,
         "false_downs_other": score.false_downs_other,
+        "false_downs_total": score.n_false_downs,
+        "false_clicks_total": score.n_false_clicks,
+        "cancelled": score.n_cancelled,
+        "matched_cancelled": score.n_matched_cancelled,
+        "unterminated": score.n_unterminated,
     }
+
+
+def _format_metric(value: object, decimals: int = 2) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{float(value):.{decimals}f}"
 
 
 def _print_table(rows: list[dict[str, object]]) -> None:
     headers = [
-        ("config", 16),
+        ("config", 22),
         ("detect", 8),
         ("miss", 6),
         ("fp_rest/min", 12),
@@ -107,11 +133,11 @@ def _print_table(rows: list[dict[str, object]]) -> None:
     print("-" * len(line))
     for row in rows:
         cells = [
-            str(row["config"]).ljust(16),
+            str(row["config"]).ljust(22),
             f"{row['detection_rate'] * 100:.0f}%".ljust(8),
             f"{int(row['missed'])}".ljust(6),
-            f"{row['false_downs_rest_per_min']:.2f}".ljust(12),
-            f"{row['false_downs_artifact_per_min']:.2f}".ljust(16),
+            _format_metric(row["false_downs_rest_per_min"]).ljust(12),
+            _format_metric(row["false_downs_artifact_per_min"]).ljust(16),
             f"{row['down_latency_ms_median']:.0f}".ljust(12),
             f"{row['up_latency_ms_median']:.0f}".ljust(10),
             f"{row['duration_error_ms_median']:.0f}".ljust(11),
@@ -119,7 +145,7 @@ def _print_table(rows: list[dict[str, object]]) -> None:
         print("".join(cells))
 
 
-def _print_sweep(rows: list[dict[str, float]], top: int) -> dict[str, float]:
+def _print_sweep(rows: list[dict[str, object]], top: int) -> dict[str, object]:
     ranked = rank_sweep_rows(rows)
     headers = (
         "enter exit dwell min_ev | detect rest/min art/min down_ms cancel"
@@ -131,7 +157,8 @@ def _print_sweep(rows: list[dict[str, float]], top: int) -> dict[str, float]:
             f"{row['enter_threshold']:.2f}  {row['exit_threshold']:.2f} "
             f"{int(row['enter_dwell_frames'])}     {int(row['min_event_ms']):3d}    | "
             f"{row['detection_rate'] * 100:4.0f}%  "
-            f"{row['false_downs_rest_per_min']:6.2f}  {row['false_downs_artifact_per_min']:6.2f} "
+            f"{_format_metric(row['false_downs_rest_per_min']):>6}  "
+            f"{_format_metric(row['false_downs_artifact_per_min']):>6} "
             f"{row['down_latency_ms_median']:6.0f}  {int(row['cancelled'])}"
         )
     best = ranked[0]
@@ -150,15 +177,63 @@ def _print_sweep(rows: list[dict[str, float]], top: int) -> dict[str, float]:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.sweep and args.nested_sweep:
+        raise SystemExit("[reson-eval] choose only one of --sweep or --nested-sweep")
     exclude = _parse_exclude(args.exclude)
     sessions_root = Path(args.sessions)
 
+    if args.nested_sweep:
+        model, features = _parse_configs(args.nested_sweep)[0]
+        decision_grid = None if args.decision_grid == "full" else frozen_decision_grid()
+        scores, aggregate, selections = evaluate_nested_decision_selection(
+            sessions_root,
+            feature_order=resolve_feature_order(features),
+            model_name=model,
+            decision_grid=decision_grid,
+            epochs=args.epochs,
+            seed=args.seed,
+            ignore_margin_ms=args.ignore_margin_ms,
+            pre_tol_ms=args.pre_tol_ms,
+            post_tol_ms=args.post_tol_ms,
+            include_glob=args.include_glob,
+            exclude=exclude,
+        )
+        row = {"config": f"nested:{model}:{features}", **aggregate}
+        _print_table([row])
+        print("\ninner gate selections:")
+        for selection in selections:
+            print(json.dumps(selection, sort_keys=True), flush=True)
+        if args.per_session:
+            print("\nouter session scores:")
+            for score in scores:
+                print(json.dumps(_session_row(model, features, score), sort_keys=True), flush=True)
+        print("\nacceptance contract:")
+        print(json.dumps(aggregate["acceptance_contract"], sort_keys=True), flush=True)
+        if not aggregate["acceptance_passed"]:
+            if not aggregate["predeclared_grid"]:
+                reason = "the exploratory decision grid is not eligible for frozen acceptance"
+            elif not aggregate["all_inner_gates_met"]:
+                reason = (
+                    "at least one outer fold used a fallback because no inner candidate met "
+                    "delivery/latency/exposure requirements"
+                )
+            else:
+                reason = "the nested candidate failed at least one frozen baseline-relative criterion"
+            print(
+                f"\n[reson-eval] ACCEPTANCE GATE FAILED: {reason}",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        return
+
     if args.sweep:
         model, features = _parse_configs(args.sweep)[0]
+        decision_grid = frozen_decision_grid() if args.decision_grid == "frozen" else None
         rows = evaluate_decision_sweep(
             sessions_root,
             feature_order=resolve_feature_order(features),
             model_name=model,
+            decision_grid=decision_grid,
             epochs=args.epochs,
             seed=args.seed,
             ignore_margin_ms=args.ignore_margin_ms,

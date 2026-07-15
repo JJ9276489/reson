@@ -166,3 +166,9 @@ shorter transient (a `down`/`cancel` pair delivers no click). Consumers never se
 two consecutive `down` events or a `down` without a terminal.
 
 Downstream consumers should depend on this switch schema rather than training profile internals.
+
+For in-process integration, use `reson.api.ResonSwitch`. Its `SwitchUpdate`
+returns the same `SwitchEvent` objects plus the current detector `probability`
+and `is_active` state. Event-level `confidence` is optional and is not populated
+by the current detector; consumers that need a continuous confidence-like value
+should read `SwitchUpdate.probability`.

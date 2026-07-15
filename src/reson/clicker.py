@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reson.binary_model import BinaryModelDetector, BinaryModelProfile
-from reson.switch import edge_events_to_switch_events
+from reson.api import ResonSwitch
+from reson.binary_model import BinaryModelProfile
 from reson.types import EmgSample, SwitchEvent
 
 
@@ -25,7 +25,8 @@ class ClickerUpdate:
 
 class ClickerEngine:
     def __init__(self, profile: BinaryModelProfile):
-        self.detector = BinaryModelDetector(profile)
+        self.switch = ResonSwitch(profile)
+        self.detector = self.switch.detector
         self.probability = 0.0
         self.is_down = False
         self.click_count = 0
@@ -42,15 +43,12 @@ class ClickerEngine:
                 self.last_click_duration_ms = event.duration_ms
 
     def feed(self, sample: EmgSample) -> ClickerUpdate:
-        # The detector's edge state is authoritative for "held down"; a press
-        # shorter than min_event_ms emits a `down` but no `up`, so deriving
-        # is_down from events alone could leave the flag stuck on.
-        state = self.detector.update(sample)
+        update = self.switch.feed(sample)
         self.last_t_ms = sample.t_ms
-        self.probability = self.detector.last_probability
-        events = edge_events_to_switch_events(self.detector.pop_events())
+        self.probability = update.probability
+        events = list(update.events)
         self._apply(events)
-        self.is_down = state == "active"
+        self.is_down = update.is_active
         return ClickerUpdate(
             probability=self.probability,
             is_down=self.is_down,
@@ -60,7 +58,7 @@ class ClickerEngine:
 
     def flush(self) -> ClickerUpdate:
         """Close any press left open when the stream ends (e.g. replay finished)."""
-        events = edge_events_to_switch_events(self.detector.flush(self.last_t_ms))
+        events = list(self.switch.flush(self.last_t_ms).events)
         self._apply(events)
         self.is_down = False
         return ClickerUpdate(

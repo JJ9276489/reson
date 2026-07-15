@@ -3,9 +3,10 @@ from __future__ import annotations
 import csv
 import json
 import random
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import exp, sqrt
+from math import exp, isfinite, sqrt
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -215,6 +216,62 @@ def evaluate_probs(labels: list[int], probs: list[float], threshold: float = 0.5
     }
 
 
+def _select_threshold_by_f1(dataset: Dataset, feature_name: str) -> float:
+    """Select the legacy midpoint threshold in O(n log n) time.
+
+    The previous implementation rescored every example for every candidate
+    midpoint, making threshold training quadratic in the number of distinct
+    feature values. Recorded sessions contain enough frames for that to peg a
+    CPU core for minutes. Sorted rows plus prefix counts produce the same
+    candidates, F1 scores, and lowest-threshold tie break.
+    """
+    if not dataset.examples:
+        raise ValueError("cannot select a threshold from zero examples")
+
+    rows = [(example.features[feature_name], example.label) for example in dataset.examples]
+    if any(not isfinite(value) for value, _label in rows):
+        raise ValueError(f"threshold feature {feature_name!r} contains a non-finite value")
+    invalid_labels = sorted({label for _value, label in rows if label not in (0, 1)})
+    if invalid_labels:
+        raise ValueError(f"threshold training requires binary labels 0/1, got {invalid_labels!r}")
+    rows.sort(key=lambda row: row[0])
+    sorted_features = [value for value, _label in rows]
+    values = sorted(set(sorted_features))
+    if len(values) == 1:
+        return values[0]
+
+    prefix_positives = [0]
+    prefix_negatives = [0]
+    for _value, label in rows:
+        prefix_positives.append(prefix_positives[-1] + (1 if label == 1 else 0))
+        prefix_negatives.append(prefix_negatives[-1] + (1 if label == 0 else 0))
+    total_positives = prefix_positives[-1]
+    total_negatives = prefix_negatives[-1]
+
+    candidates = [(a + b) / 2.0 for a, b in zip(values, values[1:])]
+    best_threshold = candidates[0]
+    best_f1 = -1.0
+
+    for threshold in candidates:
+        # Bisect the actual rounded midpoint rather than assuming it lies
+        # strictly between its source values. That preserves legacy behavior
+        # for endpoint rounding and midpoint overflow to positive infinity.
+        split = bisect_left(sorted_features, threshold)
+        predicted_tp = total_positives - prefix_positives[split]
+        predicted_fp = total_negatives - prefix_negatives[split]
+        false_negatives = prefix_positives[split]
+        # Keep the legacy floating-point calculation order so an exact or
+        # near-exact tie selects the same earliest candidate as before.
+        precision = predicted_tp / max(predicted_tp + predicted_fp, 1)
+        recall = predicted_tp / max(predicted_tp + false_negatives, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = threshold
+
+    return best_threshold
+
+
 def train_threshold_profile(
     train: Dataset,
     val: Dataset,
@@ -223,19 +280,12 @@ def train_threshold_profile(
 ) -> tuple[BinaryModelProfile, dict[str, float]]:
     if not train.examples:
         raise ValueError("cannot train threshold model with zero examples")
-    values = sorted(set(ex.features[feature_name] for ex in train.examples))
-    if len(values) == 1:
-        candidates = values
-    else:
-        candidates = [(a + b) / 2.0 for a, b in zip(values, values[1:])]
-    best_threshold = candidates[0]
-    best_metric = -1.0
-    for threshold in candidates:
-        probs = [1.0 if ex.features[feature_name] >= threshold else 0.0 for ex in train.examples]
-        metric = evaluate_probs(train.labels(), probs)["f1"]
-        if metric > best_metric:
-            best_metric = metric
-            best_threshold = threshold
+    best_threshold = _select_threshold_by_f1(train, feature_name)
+    if not isfinite(best_threshold):
+        raise ValueError(
+            f"threshold candidates for feature {feature_name!r} overflowed; "
+            "check the recorded feature values"
+        )
     below = [ex.features[feature_name] for ex in train.examples if ex.label == 0]
     above = [ex.features[feature_name] for ex in train.examples if ex.label == 1]
     softness = max(abs((median(above) if above else best_threshold) - (median(below) if below else best_threshold)) / 4.0, 1.0)
